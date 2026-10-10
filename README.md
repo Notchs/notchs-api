@@ -1,12 +1,12 @@
-# city-wrapped-api
-This is the backend code of city wrapped web application.
+# notchs-api
+This is the backend code of Notchs web application.
 
 Built with **FastAPI**, **SQLAlchemy 2.0 (async)**, **PostgreSQL** and **Alembic**.
 
 ## Project structure
 
 ```
-city-wrapped-api/
+notchs-api/
 ├── app/
 │   ├── main.py                 # App factory: middleware, exception handlers, routers
 │   ├── api/
@@ -134,7 +134,7 @@ The `Dockerfile` is multi-stage:
 
 - `dev` — runtime + test/lint tooling; source is bind-mounted by `docker-compose.yml`.
 - `prod` — runtime dependencies and application code only, runs as a non-root user:
-  `docker build --target prod -t city-wrapped-api .`
+  `docker build --target prod -t notchs-api .`
 
 ## Contributing
 

@@ -1,5 +1,5 @@
 {
-  "name": "City Wrapped API",
+  "name": "Notchs API",
   "dockerComposeFile": ["../docker-compose.yml"],
   "service": "api",
   "workspaceFolder": "/app",

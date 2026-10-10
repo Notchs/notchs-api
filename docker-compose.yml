@@ -18,7 +18,7 @@ services:
       - .:/app
 
   # Optional offline Postgres: `docker compose --profile local-db up`, and in .env set
-  # DATABASE_URL=postgresql://postgres:postgres@db:5432/city_wrapped, empty
+  # DATABASE_URL=postgresql://postgres:postgres@db:5432/notchs, empty
   # MIGRATION_DATABASE_URL and DB_USE_POOLER=false.
   db:
     image: postgres:18-alpine
@@ -26,13 +26,13 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: city_wrapped
+      POSTGRES_DB: notchs
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d city_wrapped"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d notchs"]
       interval: 5s
       timeout: 5s
       retries: 10

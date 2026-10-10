@@ -1,6 +1,6 @@
 # User Module (`customers`): Plan
 
-Part of [WORKPLAN.md](../WORKPLAN.md). The "user" in City Wrapped is the **customer**: a person identified by their WhatsApp number who scans QR codes at venues. Venue staff (`venue_users`) belong to the `venues` module, and admins have their own table (see WORKPLAN S1). Both are out of scope here.
+Part of [WORKPLAN.md](../WORKPLAN.md). The "user" in Notchs is the **customer**: a person identified by their WhatsApp number who scans QR codes at venues. Venue staff (`venue_users`) belong to the `venues` module, and admins have their own table (see WORKPLAN S1). Both are out of scope here.
 
 **Code location:** `app/modules/customers/`
 **Depends on:** `core/`, `shared/`, `cities` and `areas` tables, `auth` module (tokens and cookies), `whatsapp` client.
@@ -16,7 +16,7 @@ Part of [WORKPLAN.md](../WORKPLAN.md). The "user" in City Wrapped is the **custo
 | Keep the WhatsApp profile name fresh | Updated on every inbound message |
 | First-time name capture ("What name should we show…?") | Bot flow + Redis conversation state |
 | Display name and public name ("Riya M.") | Normalisation + computed `public_name` |
-| Handle (`citywrapped.in/riya_m`) | Generation, validation, reserved words, change limit |
+| Handle (`notchs.com/riya_m`) | Generation, validation, reserved words, change limit |
 | Founding Member #N (first 500) | Assigned at creation under a lock |
 | Consent (DPDP) | `consent_at` + `consent_version` set on first scan |
 | Profile API | `GET/PATCH/DELETE /me`, `GET /me/visits`, `GET /u/{handle}` |
@@ -52,7 +52,7 @@ Conventions from the spec apply. Every column is `NOT NULL` unless marked nullab
 | `consent_at` | timestamptz | | | spec | When the first scan happened, and with it acceptance of the privacy policy linked in the first reply. |
 | `consent_version` | text | | | **new** | Privacy-policy version accepted, e.g. `2026-10`. DPDP needs proof of *what* was agreed. |
 | `preferred_language` | enum `language_code` (`en`, `hi`, `gu`) | | `en` | **new** | Cheap to add now. Bot replies stay English for MVP, but Gujarati and Hindi templates can come later without a migration. |
-| `marketing_opt_out_at` | timestamptz | yes | | **new** | Set by `STOP`, cleared by `START`. The monthly Wrapped template is not sent while this is set. Protects the WhatsApp number's quality rating. |
+| `marketing_opt_out_at` | timestamptz | yes | | **new** | Set by `STOP`, cleared by `START`. The monthly Notch template is not sent while this is set. Protects the WhatsApp number's quality rating. |
 | `is_blocked` | boolean | | `false` | **new** | Admin can block abusive accounts. Blocked customers get a neutral reply and no stamps. |
 | `blocked_reason` | text | yes | | **new** | Internal note, admin-only. |
 | `last_active_at` | timestamptz | | `now()` | spec | Updated on any inbound message or authenticated API call (at most once per minute, see §7). |
@@ -212,7 +212,7 @@ erDiagram
 Called by the scan pipeline (worker) **before** code verification. Every scan attempt can then be tied to a customer.
 
 ```
-inbound message (wa_id=919876543210, profile.name="Riya Mehta", text="CW KAAFI-SBR 482913")
+inbound message (wa_id=919876543210, profile.name="Riya Mehta", text="NOTCH KAAFI-SBR 482913")
   │
   ├─ phone = "+" + wa_id
   ├─ customers.service.get_or_create_by_phone(phone, wa_name, city_id=venue.city_id)
@@ -230,7 +230,7 @@ inbound message (wa_id=919876543210, profile.name="Riya Mehta", text="CW KAAFI-S
   └─ continue scan pipeline
 ```
 
-If the first message is not a scan (e.g. "hi"), we still create the customer if we can resolve a city. In the MVP there is only one city, so we use the default city from settings. The bot replies with a short "scan a City Wrapped QR at a cafe" message.
+If the first message is not a scan (e.g. "hi"), we still create the customer if we can resolve a city. In the MVP there is only one city, so we use the default city from settings. The bot replies with a short "scan a Notchs QR at a cafe" message.
 
 **Founding number:** `pg_advisory_xact_lock(<const>)`, then `SELECT coalesce(max(founding_number), 0) + 1`. Assign the result if it is ≤ 500. The lock lives only for the creating transaction, so there are no gaps and no duplicates. We avoid a Postgres sequence because sequences leave gaps on rollback.
 
@@ -256,7 +256,7 @@ Changing the display name does **not** regenerate the handle, so shared links ke
 
 - Sent automatically after the first stamp, and whenever the customer sends `LOGIN`.
 - `LOGIN` is rate-limited: Redis `rl:login:{customer_id}`, 3 per 15 minutes.
-- `auth.service.issue_login_link(subject=customer)` → `https://api.citywrapped.in/api/v1/auth/link/<token>` → sets cookies → redirects to `https://citywrapped.in/me`.
+- `auth.service.issue_login_link(subject=customer)` → `https://api.notchs.com/api/v1/auth/link/<token>` → sets cookies → redirects to `https://notchs.com/me`.
 - Blocked or deleted customers get no link.
 
 ### 4.4 Keywords handled by this module
@@ -293,7 +293,7 @@ Used everywhere a name is shown to anyone but the customer: leaderboard, feed, v
 ### Handle
 - Format `^[a-z0-9_]{3,20}$`, lowercase.
 - Generated as transliterate(first name) + `_` + last initial, e.g. `riya_m`. On a clash: `riya_m2`, `riya_m3`, and so on. If too short or empty: `explorer_<4 random chars>`. Transliteration uses `unidecode`.
-- Reserved, never assignable: `admin, api, app, venue, venues, me, u, w, login, logout, auth, settings, help, support, about, privacy, terms, leaderboard, trends, feed, citywrapped, deleted`, plus anything starting with `deleted_`.
+- Reserved, never assignable: `admin, api, app, venue, venues, me, u, w, login, logout, auth, settings, help, support, about, privacy, terms, leaderboard, trends, feed, notchs, deleted`, plus anything starting with `deleted_`.
 - Customer edits: at most once per 30 days (`handle_changed_at`). Error code `customers.handle_change_too_soon` with the next allowed date.
 
 ### Privacy (`is_public = false`)
@@ -305,7 +305,7 @@ Used everywhere a name is shown to anyone but the customer: leaderboard, feed, v
 | `GET /u/{handle}` | Profile | 404 |
 | Live feed | Shown | Not shown |
 | Venue insights, regulars list | "Riya M." | "Private customer" |
-| Wrapped card links | Work | Still work: the customer chose to share that card |
+| Notch card links | Work | Still work: the customer chose to share that card |
 
 ---
 
@@ -394,7 +394,7 @@ Phone numbers never appear in any response, not even `/me`. The customer knows t
 
 **Dependency `current_customer`** (in `shared/deps.py`): reads the customer access cookie, verifies the JWT (`sub` = customer id, `typ = "customer"`), loads the row, and rejects with 401 if missing or deleted, 403 if blocked. It touches `last_active_at` if more than 60 s have passed (Redis `act:{id}` key with 60 s TTL), so we don't write on every request.
 
-**Cookie naming detail:** the spec names the cookies `cw_customer` and `cw_venue`, but each app needs **two** cookies. Proposal: `cw_customer_at` (access, `Path=/`) and `cw_customer_rt` (refresh, `Path=/api/v1/auth`), and the same pattern for venue. The refresh token is then only sent to the refresh endpoint.
+**Cookie naming detail:** the spec names the cookies `nx_customer` and `nx_venue`, but each app needs **two** cookies. Proposal: `nx_customer_at` (access, `Path=/`) and `nx_customer_rt` (refresh, `Path=/api/v1/auth`), and the same pattern for venue. The refresh token is then only sent to the refresh endpoint.
 
 **Error codes**
 

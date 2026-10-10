@@ -1,8 +1,8 @@
-# City Wrapped API: Workplan
+# Notchs API: Workplan
 
-Based on *City Wrapped: Product & Tech Spec v1.0 (October 2026)*. The spec is a working baseline, not final. When something here changes, update this file in the same PR.
+Based on *Notchs: Product & Tech Spec v1.0 (October 2026)*. The spec is a working baseline, not final. When something here changes, update this file in the same PR.
 
-This repo (`city-wrapped-api`) holds the backend: FastAPI app, ARQ worker, Alembic migrations. The spec's `backend/` folder is the root of this repo. The Next.js frontend lives in its own repo.
+This repo (`notchs-api`) holds the backend: FastAPI app, ARQ worker, Alembic migrations. The spec's `backend/` folder is the root of this repo. The Next.js frontend lives in its own repo.
 
 ---
 
@@ -41,19 +41,58 @@ Two roles, created once by whoever administers the DB:
 
 | Role | Used by | Privileges |
 |---|---|---|
-| `cw_migrator` | Alembic (CI and dev schemas) | Owns tables. DDL. |
-| `cw_app` | FastAPI and the worker at runtime | DML on all tables. **`INSERT` and `SELECT` only on `audit_logs`** (spec: append-only). |
+| `notchs_migrator` | Alembic (CI and dev schemas) | Owns tables. DDL. |
+| `notchs_app` | FastAPI and the worker at runtime | DML on all tables. **`INSERT` and `SELECT` only on `audit_logs`** (spec: append-only). |
 
 Grants are set in migrations so every environment gets the same ones. This needs two URLs: `DATABASE_URL` for the app and `MIGRATION_DATABASE_URL` for Alembic.
 
-**Status on the shared Neon DB: done ✅.** Both roles were created with SQL (not the Neon console, which would make them members of `neon_superuser`):
+**Status on the shared Neon DB: NOT done ❌ (checked 2026-10-10).** `pg_roles` contains only Neon's built-ins plus `neondb_owner` — neither role was ever created, so the app and Alembic are both connecting as `neondb_owner` today. That means the `audit_logs` append-only rule and the "no DDL at runtime" guardrail below are **not in force yet**. Create both roles with SQL (not the Neon console, which would make them members of `neon_superuser`):
 
-- `cw_migrator`: `CREATE` on the database (so Alembic can create `dev_<name>` schemas) and `USAGE, CREATE` on `public`.
-- `cw_app`: `USAGE` on `public`, `statement_timeout = 30s`.
-- Default privileges: everything `cw_migrator` creates later (schemas, tables, sequences) is automatically usable by `cw_app` for `SELECT/INSERT/UPDATE/DELETE`. `cw_app` cannot create, alter or drop anything.
-- `neondb_owner` is a member of `cw_migrator` and is used only in the Neon console, never in `.env`.
+- `notchs_migrator`: `CREATE` on the database (so Alembic can create `dev_<name>` schemas) and `USAGE, CREATE` on `public`.
+- `notchs_app`: `USAGE` on `public`, `statement_timeout = 30s`.
+- Default privileges: everything `notchs_migrator` creates later (schemas, tables, sequences) is automatically usable by `notchs_app` for `SELECT/INSERT/UPDATE/DELETE`. `notchs_app` cannot create, alter or drop anything.
+- `neondb_owner` is a member of `notchs_migrator` and is used only in the Neon console, never in `.env`.
 - Staging and production repeat the same SQL when they are created.
-- Gotcha: a table created while connected as `neondb_owner` (e.g. `alembic_version` from an old `.env`) is not accessible to `cw_migrator`. Drop it as the schema owner (`cw_migrator`) and let Alembic recreate it.
+
+**The SQL.** Run as `neondb_owner` in the Neon SQL Editor (or on the direct, non-pooler URL).
+Generate two strong passwords and put them in the password manager first:
+
+```sql
+CREATE ROLE notchs_migrator LOGIN PASSWORD '<migrator-password>';
+CREATE ROLE notchs_app      LOGIN PASSWORD '<app-password>';
+
+-- neondb_owner needs to act as the migrator to set its default privileges below
+GRANT notchs_migrator TO neondb_owner WITH ADMIN OPTION;
+
+-- Migrator: owns everything, does all DDL
+GRANT CREATE ON DATABASE neondb TO notchs_migrator;      -- lets Alembic create dev_<name> schemas
+GRANT USAGE, CREATE ON SCHEMA public TO notchs_migrator;
+
+-- App: runtime only, no DDL
+GRANT USAGE ON SCHEMA public TO notchs_app;
+ALTER ROLE notchs_app SET statement_timeout = '30s';     -- needed because the pooler drops startup params
+
+-- Anything the migrator creates later is automatically usable by the app.
+-- No IN SCHEMA clause, so this covers dev_<name> schemas too, not just public.
+ALTER DEFAULT PRIVILEGES FOR ROLE notchs_migrator
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO notchs_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE notchs_migrator
+  GRANT USAGE, SELECT ON SEQUENCES TO notchs_app;
+```
+
+Then: put both URLs in the password manager and everyone's `.env`, set the
+`MIGRATION_DATABASE_URL` repo secret to the migrator's direct URL, and stop using
+`neondb_owner` in `.env`.
+
+Two follow-ups this SQL does **not** cover:
+
+- A table created while connected as `neondb_owner` is not accessible to `notchs_migrator`. `alembic_version`
+  is the likely one, left over from the current setup. Check with
+  `SELECT tablename, tableowner FROM pg_tables WHERE schemaname = 'public';` and drop any table owned by
+  `neondb_owner` so Alembic recreates it as `notchs_migrator`.
+- The default privileges above grant `UPDATE`/`DELETE` on every table, including `audit_logs`. The
+  migration that creates `audit_logs` must `REVOKE UPDATE, DELETE ON audit_logs FROM notchs_app;` to make
+  it append-only as the spec requires.
 
 ### 0.4 Connections
 
@@ -61,7 +100,7 @@ A shared hosted DB has a low connection limit, and 4 developers, each with hot r
 
 - Keep the SQLAlchemy pool small in dev: `pool_size=2`, `max_overflow=3`, `pool_pre_ping=True`.
 - If we connect through a pooler (Supabase/Neon in PgBouncer transaction mode), asyncpg needs `statement_cache_size=0` and `prepared_statement_cache_size=0`. Otherwise it fails at random with "prepared statement does not exist". Setting `DB_USE_POOLER=true` applies both, plus unique prepared statement names. Alembic uses `MIGRATION_DATABASE_URL`, the direct (unpooled) URL.
-- Startup settings (`search_path`, `statement_timeout`, UTC) only apply on direct connections. Through a pooler, set `statement_timeout` on the role: `ALTER ROLE cw_app SET statement_timeout = '30s'`.
+- Startup settings (`search_path`, `statement_timeout`, UTC) only apply on direct connections. Through a pooler, set `statement_timeout` on the role: `ALTER ROLE notchs_app SET statement_timeout = '30s'`.
 - Stop your worker when you are not using it.
 
 ### 0.5 Data on the shared DB
@@ -159,7 +198,7 @@ Estimates assume 2 to 3 people on backend. "Done when" is copied from the spec s
 ### Phase 1: Foundations (≈ 2 weeks)
 **Done when:** a WhatsApp message to the test number gets an automatic reply, and CI migrates the shared DB on merge.
 
-**Day 1 (non-code, long lead time):** start Meta Business verification, register the WhatsApp test number, and reserve `citywrapped.in` with `api.` and app subdomains. Verification can take weeks and blocks Phase 4.
+**Day 1 (non-code, long lead time):** start Meta Business verification, register the WhatsApp test number, and reserve `notchs.com` with `api.` and app subdomains. Verification can take weeks and blocks Phase 4.
 
 | # | Task | Notes |
 |---|---|---|
@@ -175,7 +214,7 @@ Estimates assume 2 to 3 people on backend. "Done when" is copied from the spec s
 | 1.10 | Webhook | `GET /webhooks/whatsapp` handshake. `POST` verifies `X-Hub-Signature-256`, inserts `whatsapp_messages` (unique `wa_message_id` = idempotency), enqueues ARQ job, returns 200. Status updates change `status`. |
 | 1.11 | Worker skeleton | `jobs/worker.py` with `process_inbound_message` that echoes a reply. Cron schedule stubs. |
 | 1.12 | `/dev/simulate-inbound` | As in §0.7. |
-| 1.13 | Auth: magic links | `auth_tokens` create/consume, `GET /auth/link/{token}`, `POST /auth/refresh` (rotation, reuse detection), `POST /auth/logout`. Cookies `cw_customer` and `cw_venue` with the flags from the spec. Customer `LOGIN` keyword sends a link. |
+| 1.13 | Auth: magic links | `auth_tokens` create/consume, `GET /auth/link/{token}`, `POST /auth/refresh` (rotation, reuse detection), `POST /auth/logout`. Cookies `nx_customer` and `nx_venue` with the flags from the spec. Customer `LOGIN` keyword sends a link. |
 | 1.14 | `audit/` | `record()` helper that uses request context. Insert-only. |
 
 ### Phase 2: Core loop (≈ 3 weeks)
@@ -186,7 +225,7 @@ Estimates assume 2 to 3 people on backend. "Done when" is copied from the spec s
 | 2.1 | `venues/` + admin venue CRUD | Venue code generation (`KAAFI-SBR`), encrypted TOTP secret, rotate secret (bumps `totp_secret_version`), pause. Areas and cities read-only for now. |
 | 2.2 | Venue users + venue login | `POST /venue/auth/request-link`, owner/staff roles, `GET /venue/me`, `GET/PATCH /venue/settings` (scan cap, hours). |
 | 2.3 | Devices + display config | Pair device (pairing link → long-lived device token), revoke, `GET /venue/display/config`. Device auth dependency separate from staff auth. |
-| 2.4 | `scans/parser.py` | Tolerant parse of `CW <CODE> <6 digits>`: case, extra spaces, missing prefix, and so on. Table-driven unit tests. |
+| 2.4 | `scans/parser.py` | Tolerant parse of `NOTCH <CODE> <6 digits>`: case, extra spaces, missing prefix, and so on. Table-driven unit tests. |
 | 2.5 | `scans/verifier.py` | pyotp, current window + 2 previous, returns the matched `code_window`. Unit tests with frozen time. |
 | 2.6 | `scans/pipeline.py` | Order: parse → venue lookup → TOTP → per-code cap (Redis `SADD` on `cap:{venue}:{window}` + TTL) → 1/venue/day (DB unique constraint is the final guard) → 4 venues/day → opening hours (flag, don't reject) → create visit + ledger rows in **one transaction** → after commit: leaderboard update, reply. Every outcome is written to `scan_attempts`. |
 | 2.7 | Customer creation + first-time flow | Create on first scan with consent timestamp, founding number (first 500, via sequence/locked counter), name confirmation buttons, privacy link in first reply. |
@@ -217,10 +256,10 @@ Estimates assume 2 to 3 people on backend. "Done when" is copied from the spec s
 | # | Task |
 |---|---|
 | 4.1 | Staging environment (own DB, Redis, WhatsApp test number); every merge to `main` deploys there. |
-| 4.2 | Production: API + worker as two processes from one image on Railway/Render/Fly, on `api.citywrapped.in`; migrations run before API start. |
+| 4.2 | Production: API + worker as two processes from one image on Railway/Render/Fly, on `api.notchs.com`; migrations run before API start. |
 | 4.3 | Monitoring: Sentry alerts on the scan pipeline, log shipping, a daily metrics query (scans, repeat rate, share rate). |
 | 4.4 | Onboard 5 to 10 venues (Abhishek), fix bugs, grow to 30. |
-| 4.5 | Track the three MVP signals: venues keep the QR screen running, customers come back for a second scan, and at least 20% of users share their Wrapped card. |
+| 4.5 | Track the three MVP signals: venues keep the QR screen running, customers come back for a second scan, and at least 20% of users share their Notch card. |
 
 ---
 
