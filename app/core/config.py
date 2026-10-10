@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     )
 
     # Application
-    APP_NAME: str = "City Wrapped API"
+    APP_NAME: str = "Notchs API"
     APP_VERSION: str = "0.1.0"
     ENVIRONMENT: Environment = "local"
     DEBUG: bool = False
@@ -41,13 +41,13 @@ class Settings(BaseSettings):
     DB_PORT: int = 5432
     DB_USER: str = "postgres"
     DB_PASSWORD: SecretStr = SecretStr("postgres")
-    DB_NAME: str = "city_wrapped"
+    DB_NAME: str = "notchs"
     # asyncpg `ssl` mode, e.g. `require` for hosted databases. Empty = no SSL param.
     DB_SSL: str | None = None
-    # Runtime URL used by the app and worker (`cw_app` role; may go through a pooler).
+    # Runtime URL used by the app and worker (`notchs_app` role; may go through a pooler).
     # Takes precedence over the DB_* parts above when set.
     DATABASE_URL: str = ""
-    # Direct (unpooled) URL used by Alembic (`cw_migrator` role). Falls back to DATABASE_URL.
+    # Direct (unpooled) URL used by Alembic (`notchs_migrator` role). Falls back to DATABASE_URL.
     MIGRATION_DATABASE_URL: str | None = None
     # Postgres schema to use: `public` for main, `dev_<name>` for your own playground.
     DB_SCHEMA: str = "public"

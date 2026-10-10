@@ -1,7 +1,7 @@
 [project]
-name = "city-wrapped-api"
+name = "notchs-api"
 version = "0.1.0"
-description = "Backend API for the City Wrapped web application."
+description = "Backend API for the Notchs web application."
 requires-python = ">=3.14"
 
 [tool.ruff]
