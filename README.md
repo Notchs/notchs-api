@@ -136,9 +136,41 @@ The `Dockerfile` is multi-stage:
 - `prod` — runtime dependencies and application code only, runs as a non-root user:
   `docker build --target prod -t city-wrapped-api .`
 
-## Branching strategy
+## Contributing
 
-- `main` — production-ready code.
-- `development` — integration branch; all work branches are created from and merged back into it.
-- `feature/<module-name>-module` — new features, e.g. `feature/auth-module`.
-- `fix/<fix-name>` — bug fixes, e.g. `fix/login-token-expiry`.
+Branch protection is not enforced on this private repo (GitHub Free), so these rules are
+a team agreement. CI still runs on every PR.
+
+### Branches
+
+- `main`: production-ready code. Only updated by a PR **from `development`** for a release.
+- `development`: integration branch. Every work branch starts here and comes back here.
+  Merging into it migrates the shared Neon DB's `public` schema (CI job `migrate-shared-db`).
+- `feature/<module-name>-module`: new features, e.g. `feature/auth-module`.
+- `fix/<fix-name>`: bug fixes, e.g. `fix/login-token-expiry`.
+
+### Rules
+
+1. **Never push directly to `development` or `main`.** Always open a PR.
+2. **Merge only when CI is green** ("Lint, tests, migrations") and one teammate has approved.
+3. **PRs into `development`**, never from a feature branch straight into `main`.
+4. **Update your branch before merging** if `development` moved on (`git pull origin development`),
+   so CI tests what will actually land.
+5. **Migrations:** try them in your own `dev_<name>` schema first, one migration per PR where
+   possible. If CI reports multiple Alembic heads, rebase and re-point `down_revision`.
+   Never run `alembic upgrade` against `public` by hand.
+6. **Never commit secrets** (`.env`, database URLs, dumps). Share credentials through the
+   password manager only.
+7. **Commit messages** follow [Conventional Commits](https://www.conventionalcommits.org/):
+   `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`.
+
+### Workflow
+
+```bash
+git checkout development && git pull           # start from the latest development
+git checkout -b feature/auth-module            # create your branch
+# ... work, commit ...
+git push -u origin feature/auth-module         # then open a PR into development on GitHub
+```
+
+After the PR is merged, delete the branch and start the next one from `development` again.
