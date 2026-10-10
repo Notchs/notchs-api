@@ -26,16 +26,16 @@ def test_database_url_built_from_parts_escapes_password() -> None:
         DATABASE_URL="",
         DB_HOST="db.example.com",
         DB_PORT=6543,
-        DB_USER="cw_app",
+        DB_USER="notchs_app",
         DB_PASSWORD="p@ss:w/rd#1",
-        DB_NAME="city_wrapped",
+        DB_NAME="notchs",
         DB_SSL="require",
     )
 
     url = make_url(settings.DATABASE_URL)
     assert url.drivername == "postgresql+asyncpg"
     assert url.password == "p@ss:w/rd#1"
-    assert (url.host, url.port, url.database) == ("db.example.com", 6543, "city_wrapped")
+    assert (url.host, url.port, url.database) == ("db.example.com", 6543, "notchs")
     assert url.query == {"ssl": "require"}
 
 

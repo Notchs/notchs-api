@@ -21,7 +21,7 @@ def build_connect_args(*, use_pooler: bool) -> dict[str, Any]:
     Direct connections get `search_path`, `statement_timeout` and UTC set at connect time.
     Transaction-mode poolers (PgBouncer/Supavisor) reject or drop startup parameters and
     can't keep prepared statements, so there we disable the statement cache instead; set
-    `statement_timeout` on the DB role (`ALTER ROLE cw_app SET statement_timeout = ...`).
+    `statement_timeout` on the DB role (`ALTER ROLE notchs_app SET statement_timeout = ...`).
     """
     if use_pooler:
         return {

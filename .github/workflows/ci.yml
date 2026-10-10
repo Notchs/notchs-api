@@ -1,4 +1,4 @@
-# CI for city-wrapped-api. See docs/WORKPLAN.md §0.1 and §0.8.
+# CI for notchs-api. See docs/WORKPLAN.md §0.1 and §0.8.
 #
 # - Every PR / push: lint, tests, single Alembic head, and migrations up/down/up against a
 #   throwaway Postgres 18 (same major version as Neon). Never touches the shared DB.
@@ -35,18 +35,18 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: city_wrapped_ci
+          POSTGRES_DB: notchs_ci
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d city_wrapped_ci"
+          --health-cmd "pg_isready -U postgres -d notchs_ci"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
 
     env:
       ENVIRONMENT: local
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/city_wrapped_ci
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/notchs_ci
       MIGRATION_DATABASE_URL: ""
       DB_SCHEMA: public
       DB_USE_POOLER: "false"
@@ -121,7 +121,7 @@ jobs:
       - name: Check secret
         run: |
           if [ -z "$MIGRATION_DATABASE_URL" ]; then
-            echo "::error::Repository secret MIGRATION_DATABASE_URL (cw_migrator, direct Neon URL) is not set."
+            echo "::error::Repository secret MIGRATION_DATABASE_URL (notchs_migrator, direct Neon URL) is not set."
             exit 1
           fi
 
