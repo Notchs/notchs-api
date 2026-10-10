@@ -1,0 +1,132 @@
+# CI for city-wrapped-api. See docs/WORKPLAN.md §0.1 and §0.8.
+#
+# - Every PR / push: lint, tests, single Alembic head, and migrations up/down/up against a
+#   throwaway Postgres 18 (same major version as Neon). Never touches the shared DB.
+# - Push to `development` (i.e. a merged PR): migrate the shared Neon DB's `public` schema.
+#   This is the ONLY place `public` gets migrated.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [development, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  checks:
+    name: Lint, tests, migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: city_wrapped_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d city_wrapped_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      ENVIRONMENT: local
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/city_wrapped_ci
+      MIGRATION_DATABASE_URL: ""
+      DB_SCHEMA: public
+      DB_USE_POOLER: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Ruff lint
+        run: ruff check . --output-format=github
+
+      - name: Ruff format
+        run: ruff format --check .
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Single Alembic head
+        run: |
+          heads=$(alembic heads | grep -c . || true)
+          echo "Alembic heads: $heads"
+          alembic heads
+          if [ "$heads" -gt 1 ]; then
+            echo "::error::Multiple Alembic heads. Rebase and re-point down_revision (WORKPLAN §0.1)."
+            exit 1
+          fi
+
+      - name: Migrations upgrade -> downgrade -> upgrade
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: App starts against the migrated DB
+        run: python -m app.db.check
+
+  migrate-shared-db:
+    name: Migrate shared Neon DB (public)
+    needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Never run two migrations against the shared DB at once, and never cancel one midway.
+    concurrency:
+      group: migrate-shared-db
+      cancel-in-progress: false
+
+    env:
+      MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+      DB_SCHEMA: public
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check secret
+        run: |
+          if [ -z "$MIGRATION_DATABASE_URL" ]; then
+            echo "::error::Repository secret MIGRATION_DATABASE_URL (cw_migrator, direct Neon URL) is not set."
+            exit 1
+          fi
+
+      - name: alembic upgrade head (public)
+        run: |
+          alembic current
+          alembic upgrade head
+          alembic current
