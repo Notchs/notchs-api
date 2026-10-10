@@ -46,7 +46,11 @@ Two roles, created once by whoever administers the DB:
 
 Grants are set in migrations so every environment gets the same ones. This needs two URLs: `DATABASE_URL` for the app and `MIGRATION_DATABASE_URL` for Alembic.
 
-**Status on the shared Neon DB: NOT done ❌ (checked 2026-10-10).** `pg_roles` contains only Neon's built-ins plus `neondb_owner` — neither role was ever created, so the app and Alembic are both connecting as `neondb_owner` today. That means the `audit_logs` append-only rule and the "no DDL at runtime" guardrail below are **not in force yet**. Create both roles with SQL (not the Neon console, which would make them members of `neon_superuser`):
+**Status on the shared Neon DB: done ✅ (verified 2026-10-10).** Both roles exist on the
+`ep-quiet-dew-b36b47cy` endpoint and were created with SQL, not the Neon console (which would
+have made them members of `neon_superuser`). They were named `cw_migrator` / `cw_app` until the
+Notchs rename and were renamed in place on 2026-10-10; passwords are SCRAM-SHA-256, so they were
+unaffected. What each one has:
 
 - `notchs_migrator`: `CREATE` on the database (so Alembic can create `dev_<name>` schemas) and `USAGE, CREATE` on `public`.
 - `notchs_app`: `USAGE` on `public`, `statement_timeout = 30s`.
@@ -54,8 +58,15 @@ Grants are set in migrations so every environment gets the same ones. This needs
 - `neondb_owner` is a member of `notchs_migrator` and is used only in the Neon console, never in `.env`.
 - Staging and production repeat the same SQL when they are created.
 
-**The SQL.** Run as `neondb_owner` in the Neon SQL Editor (or on the direct, non-pooler URL).
-Generate two strong passwords and put them in the password manager first:
+**Watch out: roles are per Neon branch.** They live in the branch's Postgres, not in the Neon
+control plane, so a branch created before they existed will not have them and the console's SQL
+Editor will report `role "..." does not exist` if it is pointed at that branch. Always check against
+the endpoint in your `DATABASE_URL`. Because they were made with SQL, they also do not appear in the
+console's Roles tab and their passwords can only be reset with `ALTER ROLE ... PASSWORD`.
+
+**The SQL**, for staging, production, or any new branch that needs them. Generate two strong
+passwords and put them in the password manager first, then run this as `neondb_owner` on the
+direct (non-pooler) URL:
 
 ```sql
 CREATE ROLE notchs_migrator LOGIN PASSWORD '<migrator-password>';
@@ -80,19 +91,19 @@ ALTER DEFAULT PRIVILEGES FOR ROLE notchs_migrator
   GRANT USAGE, SELECT ON SEQUENCES TO notchs_app;
 ```
 
-Then: put both URLs in the password manager and everyone's `.env`, set the
-`MIGRATION_DATABASE_URL` repo secret to the migrator's direct URL, and stop using
-`neondb_owner` in `.env`.
+Then: both URLs into the password manager and everyone's `.env`, the
+`MIGRATION_DATABASE_URL` repo secret set to the migrator's **direct** URL, and no
+`neondb_owner` in any `.env`.
 
-Two follow-ups this SQL does **not** cover:
+Two things this SQL does **not** cover:
 
-- A table created while connected as `neondb_owner` is not accessible to `notchs_migrator`. `alembic_version`
-  is the likely one, left over from the current setup. Check with
+- A table created while connected as `neondb_owner` is not accessible to `notchs_migrator`. Check with
   `SELECT tablename, tableowner FROM pg_tables WHERE schemaname = 'public';` and drop any table owned by
-  `neondb_owner` so Alembic recreates it as `notchs_migrator`.
+  `neondb_owner` so Alembic recreates it. (On the shared DB this is clean: `alembic_version` is owned by
+  `notchs_migrator`.)
 - The default privileges above grant `UPDATE`/`DELETE` on every table, including `audit_logs`. The
   migration that creates `audit_logs` must `REVOKE UPDATE, DELETE ON audit_logs FROM notchs_app;` to make
-  it append-only as the spec requires.
+  it append-only as the spec requires. Nothing enforces this yet.
 
 ### 0.4 Connections
 
