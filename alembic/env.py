@@ -25,12 +25,21 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 schema = settings.DB_SCHEMA  # validated as a plain identifier in Settings
+VERSION_TABLE = "alembic_version"
+
+
+def _include_name(name: str | None, type_: str, parent_names: dict[str, str | None]) -> bool:
+    # The version table lives in DB_SCHEMA next to our tables, so autogenerate would see it
+    # as a table missing from the models and try to drop it.
+    return not (type_ == "table" and name == VERSION_TABLE)
 
 
 def _configure(**kwargs: object) -> None:
     context.configure(
         target_metadata=target_metadata,
+        version_table=VERSION_TABLE,
         version_table_schema=schema,
+        include_name=_include_name,
         compare_type=True,
         compare_server_default=True,
         **kwargs,

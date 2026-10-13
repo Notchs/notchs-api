@@ -27,7 +27,10 @@ notchs-api/
 │   ├── middleware/
 │   │   └── request_context.py  # X-Request-ID + request timing logs
 │   └── modules/                # One package per feature
-│       └── health/
+│       ├── admin_users/        # Notchs staff accounts (model only; login comes with auth)
+│       ├── health/
+│       ├── locations/          # Cities and areas (models only)
+│       └── venues/             # Venue model, schemas, repository, service
 ├── alembic/                    # Database migrations
 ├── tests/                      # Mirrors app/ layout
 ├── .devcontainer/              # VS Code Dev Container config
