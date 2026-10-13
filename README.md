@@ -14,6 +14,7 @@ notchs-api/
 │   ├── core/                   # Cross-cutting concerns
 │   │   ├── config.py           # Settings (env / .env)
 │   │   ├── logging.py          # Logging setup
+│   │   ├── redis.py            # Async Redis client + connection check
 │   │   └── exceptions.py       # AppException hierarchy + global handlers
 │   ├── db/
 │   │   ├── base.py             # Declarative Base, mixins, `Entity` base model
@@ -21,7 +22,7 @@ notchs-api/
 │   │   └── models.py           # Model registry for Alembic autogenerate
 │   ├── common/                 # Shared, reusable building blocks (DRY)
 │   │   ├── schemas.py          # BaseSchema, TimestampSchema, EntitySchema, CustomResponse, PaginatedResponse, ErrorResponse
-│   │   ├── dependencies.py     # DBSession, Pagination
+│   │   ├── dependencies.py     # DBSession, RedisClient, Pagination
 │   │   ├── repository.py       # Generic async CRUD repository
 │   │   └── service.py          # Generic CRUD service (get/list/create/update/delete)
 │   ├── middleware/
@@ -33,7 +34,7 @@ notchs-api/
 ├── .devcontainer/              # VS Code Dev Container config
 ├── .env.example
 ├── Dockerfile                  # Multi-stage: dev / prod
-├── docker-compose.yml          # Local stack: api (+ optional local postgres)
+├── docker-compose.yml          # Local stack: api + redis (+ optional local postgres)
 ├── requirements.txt / requirements-dev.txt
 └── pyproject.toml              # Ruff + pytest config
 ```
@@ -60,6 +61,13 @@ To add a module:
 3. Include its router in `app/api/router.py`.
 4. Add tests under `tests/modules/<name>/`.
 
+## Documentation
+
+- [docs/WORKPLAN.md](docs/WORKPLAN.md): phased plan, shared database rules, schema decisions.
+- [docs/modules/](docs/modules/): one design doc per module, written before the module is built.
+  - [auth.md](docs/modules/auth.md): venue apply, approval, email + password login, sessions.
+  - [customers.md](docs/modules/customers.md): customer profile, handles, privacy, delete my data.
+
 ## Getting started
 
 Development runs **only in Docker** — no local Python or virtualenv is needed.
@@ -70,10 +78,11 @@ cp .env.example .env
 docker compose up --build
 ```
 
-This starts the API (with hot reload) against the database in `.env` (shared Neon DB).
+This starts the API (with hot reload) against the database in `.env` (shared Neon DB), plus
+your own Redis container. The API refuses to start if it cannot reach either.
 
 - API docs: http://localhost:8000/docs (disabled in production)
-- Liveness: `GET /api/v1/health` · Readiness (checks DB): `GET /api/v1/health/ready`
+- Liveness: `GET /api/v1/health` · Readiness (checks DB and Redis): `GET /api/v1/health/ready`
 
 ### Editor (VS Code)
 
@@ -127,6 +136,18 @@ DB_SCHEMA=dev_yourname alembic upgrade head
 ```
 
 Full rules for the shared DB: [docs/WORKPLAN.md §0](docs/WORKPLAN.md#0-ground-rules-for-the-shared-postgresql-database).
+
+## Redis
+
+Redis holds rate limits, one-time codes, leaderboards and the job queue. Unlike Postgres it is
+**not shared**: `docker compose up` starts a `redis` container for you and the API reaches it at
+`redis://redis:6379/0`. Existing `.env` files need no change. Set `REDIS_URL` in `.env` only to
+point at a different Redis.
+
+```bash
+docker compose exec redis redis-cli            # inspect keys
+docker compose exec redis redis-cli FLUSHDB    # wipe your local Redis
+```
 
 ## Docker images
 

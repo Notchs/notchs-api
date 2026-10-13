@@ -139,6 +139,15 @@ Meta sends webhooks to one URL, so only one developer can receive real messages 
 - CI runs Postgres 18 (same major version as Neon) and Redis as GitHub Actions service containers.
 - Locally, `pytest` creates a `test_<uuid>` schema on the shared DB (or uses `TEST_DATABASE_URL` if set), runs migrations, uses transaction-rollback fixtures and drops the schema at the end.
 
+### 0.9 WhatsApp costs: customer-initiated only
+
+Messages the customer starts are free, and so are our replies within 24 hours of their last message. Messages we start (templates) cost money. Every flow in the MVP is designed as a reply:
+
+- Scan: the QR opens WhatsApp with a pre-typed message, the customer sends it, the bot replies (stamp, points, rank, buttons).
+- Login: the customer sends `LOGIN` (the website's "Login with WhatsApp" button pre-types it), the bot replies with the link.
+- Wrap: pull, not push. The customer sends `WRAP` and gets the link. No monthly template broadcast.
+- Meta's prices change from time to time, so check the current rates before launch. Verification is still required but has no fee.
+
 ---
 
 ## 1. Schema review: points to settle before the first migration
@@ -147,7 +156,7 @@ The spec's schema is solid. These are gaps and Postgres details that will bite i
 
 | # | Table | Issue | Proposal |
 |---|---|---|---|
-| S1 | (missing) | No admin identity. `require_admin` and `audit_logs.actor_type = admin` have nothing to point to. | Add `admin_users (id, name, phone_e164 unique, is_active)` and add `admin` to `auth_tokens.subject_type`. Same magic-link login. |
+| S1 | (missing) | No admin identity. `require_admin` and `audit_logs.actor_type = admin` have nothing to point to. | Add `admin_users (id, name, email unique, password_hash, is_active)` and add `admin` to `auth_tokens.subject_type`. Email + password login, same as venues ([modules/auth.md](modules/auth.md)). First admin is created with a CLI command. |
 | S2 | `points_ledger` | `unique (customer_id, reason, visit_id)`: `visit_id` is NULL for quest and trend rows, and NULLs never collide, so duplicates get through. "Once per trend per month" isn't enforced either. | Use partial unique indexes: `(customer_id, visit_id) WHERE reason IN ('new_venue','repeat_visit')`, `(customer_id, reference_id) WHERE reason = 'quest'`, and for trends add a `period_key` text column with `unique (customer_id, reference_id, period_key) WHERE reason = 'trend'`. |
 | S3 | `customer_rewards` | Nothing stops a welcome reward from unlocking twice under concurrent scans. | Add `cycle integer default 1` and `unique (customer_id, reward_id, cycle)`. Welcome and quest rewards stay at cycle 1. Punch cards increment it. |
 | S4 | `audit_logs` | On a partitioned table the primary key must include the partition key. | PK `(id, created_at)`. Write this migration by hand (autogenerate can't create partitions). Create the first 2 partitions in the migration. |
@@ -192,6 +201,7 @@ Every table has two kinds of identifier, with separate jobs:
 | `venues` | `venue_code` | `VEN` |
 | `venue_users` | `venue_user_code` | `VUS` |
 | `admin_users` | `admin_user_code` | `ADM` |
+| `venue_applications` | `application_code` | `APP` |
 | `visits` | `visit_code` | `VIS` |
 | `rewards` | `reward_code` | `RWD` |
 | `customer_rewards` | `customer_reward_code` | `CRW` |
@@ -209,23 +219,23 @@ Estimates assume 2 to 3 people on backend. "Done when" is copied from the spec s
 ### Phase 1: Foundations (≈ 2 weeks)
 **Done when:** a WhatsApp message to the test number gets an automatic reply, and CI migrates the shared DB on merge.
 
-**Day 1 (non-code, long lead time):** start Meta Business verification, register the WhatsApp test number, and reserve `notchs.com` with `api.` and app subdomains. Verification can take weeks and blocks Phase 4.
+**Day 1 (non-code, long lead time):** start Meta Business verification, register the WhatsApp test number, and reserve `notchs.com` with `api.`, `venues.` and `admin.` subdomains (customers use `notchs.com`; `notchs.com` links venues to `venues.notchs.com/apply`). The email provider (Resend) also needs the domain's DNS records. Verification can take weeks and blocks Phase 4.
 
 | # | Task | Notes |
 |---|---|---|
 | 1.1 | Project scaffold | `uv`, Python 3.14, `pyproject.toml`, Ruff, mypy strict, pre-commit, `.env.example`, `Dockerfile`, `docker-compose.yml` (Redis only). |
-| 1.2 | `core/` + `db/` | `config.py` (pydantic-settings incl. `DB_SCHEMA`, both DB URLs) ✅, `app/db/session.py` (async engine, search_path, small pool, pooler flags) ✅, `redis.py`, `errors.py` (AppError family + handler + `{"success":false,"error":{code,message}}`), `time.py` (IST business-day helpers), `security.py` (JWT, token hashing, Fernet). |
+| 1.2 | `core/` + `db/` | `config.py` (pydantic-settings incl. `DB_SCHEMA`, both DB URLs) ✅, `app/db/session.py` (async engine, search_path, small pool, pooler flags) ✅, `redis.py` (async client, `RedisClient` dependency, startup and readiness checks; Redis service in `docker-compose.yml` and CI) ✅, `errors.py` (AppError family + handler + `{"success":false,"error":{code,message}}`), `time.py` (IST business-day helpers), `security.py` (JWT, token hashing, Fernet). |
 | 1.3 | `shared/` | `Base`, `UUIDMixin` (UUIDv7) ✅, `TimestampMixin`, `BaseRepository[Model]`, cursor `Page` schema, `deps.py` stubs. `app/common/ids.py` with `new_code(prefix)` for public codes (§1.1) ✅. |
 | 1.4 | Logging + request context | structlog JSON, `request_id` middleware, Sentry init. |
 | 1.5 | Alembic setup | Schema-aware `env.py` ✅, naming convention for constraints ✅, `alembic heads` CI check. |
 | 1.6 | **Migration 0001: full schema** | Every table in the spec plus the S1–S12 changes we agree on, all enums, indexes, roles/grants and audit partitions. One migration for the whole schema is fine before any data exists. Write the partition and grant parts by hand. |
 | 1.7 | Seed script | Idempotent, as in §0.5. |
 | 1.8 | CI | ✅ `.github/workflows/ci.yml`: Ruff, pytest, single-head check, migrations up/down/up on a Postgres 18 service container. On push to `development`: `alembic upgrade head` on the shared DB's `public` using the `MIGRATION_DATABASE_URL` repo secret. Still to add: mypy, seed script step. |
-| 1.9 | `whatsapp/` client | `WhatsAppClient` (httpx) for text, interactive buttons and templates. Dry-run mode. Every send stored in `whatsapp_messages` (outbound). |
+| 1.9 | `whatsapp/` client | `WhatsAppClient` (httpx) for text, interactive buttons and templates. Dry-run mode. Every send stored in `whatsapp_messages` (outbound). **Cost rule:** the MVP only sends replies inside the 24-hour window after a customer's message (free). Templates are supported by the client but not used until there is budget, see §0.9. |
 | 1.10 | Webhook | `GET /webhooks/whatsapp` handshake. `POST` verifies `X-Hub-Signature-256`, inserts `whatsapp_messages` (unique `wa_message_id` = idempotency), enqueues ARQ job, returns 200. Status updates change `status`. |
 | 1.11 | Worker skeleton | `jobs/worker.py` with `process_inbound_message` that echoes a reply. Cron schedule stubs. |
 | 1.12 | `/dev/simulate-inbound` | As in §0.7. |
-| 1.13 | Auth: magic links | `auth_tokens` create/consume, `GET /auth/link/{token}`, `POST /auth/refresh` (rotation, reuse detection), `POST /auth/logout`. Cookies `nx_customer` and `nx_venue` with the flags from the spec. Customer `LOGIN` keyword sends a link. |
+| 1.13 | Auth | Full plan in [modules/auth.md](modules/auth.md). **Venues and admins:** email + password; venues join by application (email verified with a 6-digit code first) and an admin approves, then the venue sets a password through an emailed single-use link. One login per venue, no staff users or roles. Change password (stays logged in) and change email (code sent to the new address). `auth_tokens`, JWT access + rotating refresh with reuse detection, `POST /auth/refresh`, `POST /auth/logout`, `EmailClient` (Resend, dry-run), Turnstile on public forms. **Customers:** identity is the WhatsApp number, no email or password. The `LOGIN` keyword (or the website's "Login with WhatsApp" button, which opens `wa.me/<number>?text=LOGIN`) makes the bot reply with a single-use link to `notchs.com/login/verify?token=...`; that page sends `POST /auth/customer/consume`. The spec's magic-link login for venues is replaced. |
 | 1.14 | `audit/` | `record()` helper that uses request context. Insert-only. |
 
 ### Phase 2: Core loop (≈ 3 weeks)
@@ -234,8 +244,8 @@ Estimates assume 2 to 3 people on backend. "Done when" is copied from the spec s
 | # | Task | Notes |
 |---|---|---|
 | 2.1 | `venues/` + admin venue CRUD | Venue code generation (`KAAFI-SBR`), encrypted TOTP secret, rotate secret (bumps `totp_secret_version`), pause. Areas and cities read-only for now. |
-| 2.2 | Venue users + venue login | `POST /venue/auth/request-link`, owner/staff roles, `GET /venue/me`, `GET/PATCH /venue/settings` (scan cap, hours). |
-| 2.3 | Devices + display config | Pair device (pairing link → long-lived device token), revoke, `GET /venue/display/config`. Device auth dependency separate from staff auth. |
+| 2.2 | Venue settings | `GET/PATCH /venue/settings` (scan cap, hours). Each venue has one login and there are no staff users or roles (the spec's `venue_users.role` is dropped). Login itself is in task 1.13 ([modules/auth.md](modules/auth.md)). |
+| 2.3 | Devices + display config | Pair the QR screen (pairing link → long-lived device token), revoke, `GET /venue/display/config`. Pairing flow and the separate device auth dependency are specified in [modules/auth.md §7](modules/auth.md#7-qr-screen-pairing). |
 | 2.4 | `scans/parser.py` | Tolerant parse of `NOTCH <CODE> <6 digits>`: case, extra spaces, missing prefix, and so on. Table-driven unit tests. |
 | 2.5 | `scans/verifier.py` | pyotp, current window + 2 previous, returns the matched `code_window`. Unit tests with frozen time. |
 | 2.6 | `scans/pipeline.py` | Order: parse → venue lookup → TOTP → per-code cap (Redis `SADD` on `cap:{venue}:{window}` + TTL) → 1/venue/day (DB unique constraint is the final guard) → 4 venues/day → opening hours (flag, don't reject) → create visit + ledger rows in **one transaction** → after commit: leaderboard update, reply. Every outcome is written to `scan_attempts`. |
@@ -255,7 +265,7 @@ Estimates assume 2 to 3 people on backend. "Done when" is copied from the spec s
 | 3.2 | `rewards/` | Venue CRUD (`/venue/rewards`), unlock on visit, wallet states, `POST /me/rewards/{id}/redeem` (requires a counted visit at that venue today, row lock, single use), `expire_rewards` job. |
 | 3.3 | Quests | City-wide rewards (`venue_id` NULL, type `quest`) with points; admin CRUD. |
 | 3.4 | `tags/` + trends | Admin tag CRUD, venue tag requests, manual trend picks, `compute_trends` job (ratio ≥ 1.5, ≥ 30 scans, ≥ 3 venues), `GET /trends`. Trend points (+25). |
-| 3.5 | `wraps/` | Generate badge / rank-jump wraps on events; `generate_monthly_wraps` job; `GET /wraps/{share_token}`; `POST /wraps/{id}/shares`. Card image rendering is frontend (`next/og`). |
+| 3.5 | `wraps/` | Generate badge / rank-jump wraps on events; `generate_monthly_wraps` job (generates only, nothing is pushed: the customer asks with the `WRAP` keyword or sees it on the web); `GET /wraps/{share_token}`; `POST /wraps/{id}/shares`. Card image rendering is frontend (`next/og`). |
 | 3.6 | Venue insights | `GET /venue/insights`: visitors, new vs returning, repeat rate, peak hours, what they tried, redemptions, regulars (names only, never phones). |
 | 3.7 | `GET /feed` | Recent public activity. |
 | 3.8 | Remaining jobs | `cleanup`, `manage_audit_partitions`. |
@@ -303,12 +313,13 @@ Work runs in parallel once Phase 1 tasks 1.1–1.6 are merged. Until then, every
 
 From the spec:
 - Flat monthly fee after the free period.
-- WhatsApp template wording and the monthly marketing-message budget.
+- WhatsApp template wording and a marketing-message budget. Not needed for the MVP: all flows are customer-initiated (§0.9). Decide when there is revenue.
 - First quests and first 10 badges.
 - Multi-branch chain dashboards.
 - When to add activity venues.
 
 New, raised by this plan:
+- ~~Auth flows~~: decided (A1–A12), no open questions. See [modules/auth.md](modules/auth.md).
 - Approve or reject schema points S1–S13.
 - Public code prefixes and which tables get a code (§1.1).
 - ~~Shared DB provider~~: **Neon** (Postgres 18), app through the `-pooler` host, Alembic on the direct host.
