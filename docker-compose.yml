@@ -7,6 +7,12 @@ services:
     env_file:
       - path: .env
         required: false
+    # Redis is local to each developer (docs/WORKPLAN.md §0.6). Set REDIS_URL in .env to override.
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      redis:
+        condition: service_healthy
     ports:
       - "8000:8000"
     # Only CI migrates the shared `public` schema (docs/WORKPLAN.md §0.1). On startup we
@@ -16,6 +22,18 @@ services:
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     volumes:
       - .:/app
+
+  redis:
+    image: redis:7-alpine
+    # No host port: only the api container talks to it. Data is kept in the redisdata volume.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   # Optional offline Postgres: `docker compose --profile local-db up`, and in .env set
   # DATABASE_URL=postgresql://postgres:postgres@db:5432/notchs, empty
@@ -39,3 +57,4 @@ services:
 
 volumes:
   pgdata:
+  redisdata:

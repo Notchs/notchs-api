@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     DB_STATEMENT_TIMEOUT_MS: int = 30_000
     DB_ECHO: bool = False
 
+    # Redis (see docs/WORKPLAN.md §0.6): each developer runs their own, it is never shared.
+    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_TIMEOUT_SECONDS: float = 5.0
+
+    @field_validator("REDIS_URL")
+    @classmethod
+    def _validate_redis_url(cls, value: str) -> str:
+        if not value.startswith(("redis://", "rediss://", "unix://")):
+            raise ValueError("REDIS_URL must start with redis://, rediss:// or unix://")
+        return value
+
     @field_validator("DATABASE_URL", "MIGRATION_DATABASE_URL")
     @classmethod
     def _normalize_db_url(cls, value: str | None) -> str | None:

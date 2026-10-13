@@ -15,3 +15,4 @@ class HealthResponse(BaseSchema):
 class ReadinessResponse(BaseSchema):
     status: Status
     database: Status
+    redis: Status

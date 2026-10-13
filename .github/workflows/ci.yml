@@ -43,9 +43,19 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
 
     env:
       ENVIRONMENT: local
+      REDIS_URL: redis://localhost:6379/0
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/notchs_ci
       MIGRATION_DATABASE_URL: ""
       DB_SCHEMA: public
