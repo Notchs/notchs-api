@@ -129,7 +129,14 @@ Try a migration in your own schema (Alembic creates it if needed):
 DB_SCHEMA=dev_yourname alembic upgrade head
 ```
 
-Full rules for the shared DB: [docs/WORKPLAN.md §0](docs/WORKPLAN.md#0-ground-rules-for-the-shared-postgresql-database).
+Rules for the shared DB:
+
+- Only CI migrates `public`, after a merge to `development`. Never run `alembic upgrade` or
+  `alembic downgrade` against it by hand. To undo a change, write a new forward migration.
+- Work in your own `dev_<name>` schema and never touch anyone else's.
+- Add columns as nullable or with a default first, so teammates' running code keeps working.
+- Never use the `neondb_owner` login in `.env`. The app connects as `notchs_app` and Alembic as
+  `notchs_migrator`.
 
 ## Docker images
 
