@@ -7,7 +7,7 @@ services:
     env_file:
       - path: .env
         required: false
-    # Redis is local to each developer (docs/WORKPLAN.md §0.6). Set REDIS_URL in .env to override.
+    # Redis is local to each developer (README, "Redis"). Set REDIS_URL in .env to override.
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     depends_on:
@@ -15,7 +15,7 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
-    # Only CI migrates the shared `public` schema (docs/WORKPLAN.md §0.1). On startup we
+    # Only CI migrates the shared `public` schema (README, "Database"). On startup we
     # migrate only your own dev_<name> schema.
     command: >
       sh -c "if [ \"$${DB_SCHEMA:-public}\" != public ]; then alembic upgrade head; fi &&

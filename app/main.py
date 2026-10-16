@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import settings
-from app.core.exceptions import register_exception_handlers
+from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.redis import check_redis, redis_client
 from app.db.session import check_connection, engine

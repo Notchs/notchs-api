@@ -2,7 +2,7 @@
 
 First tables: the venues table from the spec, plus the three tables it points at.
 Written by hand. `notchs_app` gets its DML rights from the migrator's default privileges
-(docs/WORKPLAN.md §0.3), so no GRANT is needed here.
+(set up once on the database), so no GRANT is needed here.
 
 Revision ID: 0001
 Revises:

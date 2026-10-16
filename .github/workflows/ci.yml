@@ -1,4 +1,4 @@
-# CI for notchs-api. See docs/WORKPLAN.md §0.1 and §0.8.
+# CI for notchs-api. Shared database rules: README, "Database".
 #
 # - Every PR / push: lint, tests, single Alembic head, and migrations up/down/up against a
 #   throwaway Postgres 18 (same major version as Neon). Never touches the shared DB.
@@ -88,7 +88,7 @@ jobs:
           echo "Alembic heads: $heads"
           alembic heads
           if [ "$heads" -gt 1 ]; then
-            echo "::error::Multiple Alembic heads. Rebase and re-point down_revision (WORKPLAN §0.1)."
+            echo "::error::Multiple Alembic heads. Rebase and re-point down_revision (README, Contributing rule 5)."
             exit 1
           fi
 

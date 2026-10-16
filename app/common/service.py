@@ -9,8 +9,8 @@ from collections.abc import Sequence
 from pydantic import BaseModel
 
 from app.common.dependencies import PaginationParams
+from app.common.exceptions import NotFoundException
 from app.common.repository import BaseRepository
-from app.core.exceptions import NotFoundException
 from app.db.base import Base
 
 

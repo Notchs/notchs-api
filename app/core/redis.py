@@ -1,6 +1,6 @@
 """Async Redis client: rate limits, one-time codes, leaderboards and the job queue.
 
-Redis is local to each developer (docs/WORKPLAN.md §0.6), unlike the shared Postgres.
+Redis is local to each developer (README, "Redis"), unlike the shared Postgres.
 """
 
 from redis.asyncio import Redis

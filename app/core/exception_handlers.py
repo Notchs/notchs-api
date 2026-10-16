@@ -1,6 +1,6 @@
-"""Domain exceptions and their global handlers.
+"""Global exception handlers: every error leaves the API as `{"success": false, "error": {...}}`.
 
-Raise these from services; never build error responses by hand in routers.
+The exception classes themselves live in `app/common/exceptions.py`.
 """
 
 from typing import Any
@@ -11,51 +11,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.common.exceptions import AppException
 from app.common.schemas import ErrorBody, ErrorResponse
 from app.core.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-class AppException(Exception):
-    status_code: int = status.HTTP_500_INTERNAL_SERVER_ERROR
-    error_code: str = "internal_error"
-    message: str = "An unexpected error occurred."
-
-    def __init__(self, message: str | None = None, *, details: Any = None) -> None:
-        self.message = message or self.message
-        self.details = details
-        super().__init__(self.message)
-
-
-class BadRequestException(AppException):
-    status_code = status.HTTP_400_BAD_REQUEST
-    error_code = "bad_request"
-    message = "Bad request."
-
-
-class UnauthorizedException(AppException):
-    status_code = status.HTTP_401_UNAUTHORIZED
-    error_code = "unauthorized"
-    message = "Authentication required."
-
-
-class ForbiddenException(AppException):
-    status_code = status.HTTP_403_FORBIDDEN
-    error_code = "forbidden"
-    message = "You do not have permission to perform this action."
-
-
-class NotFoundException(AppException):
-    status_code = status.HTTP_404_NOT_FOUND
-    error_code = "not_found"
-    message = "Resource not found."
-
-
-class ConflictException(AppException):
-    status_code = status.HTTP_409_CONFLICT
-    error_code = "conflict"
-    message = "Resource already exists."
 
 
 def _error_response(status_code: int, code: str, message: str, details: Any = None) -> JSONResponse:
@@ -71,12 +31,21 @@ async def _http_exception_handler(_: Request, exc: StarletteHTTPException) -> JS
     return _error_response(exc.status_code, "http_error", str(exc.detail))
 
 
+def _validation_details(exc: RequestValidationError) -> list[dict[str, Any]]:
+    """Where and why each field failed. Leaves out `input` (it could echo a password back) and
+    `ctx` (it can hold the raised exception object, which is not JSON)."""
+    return [
+        {"loc": list(error.get("loc", ())), "msg": error.get("msg", ""), "type": error.get("type")}
+        for error in exc.errors()
+    ]
+
+
 async def _validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
     return _error_response(
         status.HTTP_422_UNPROCESSABLE_CONTENT,
         "validation_error",
         "Request validation failed.",
-        exc.errors(),
+        _validation_details(exc),
     )
 
 

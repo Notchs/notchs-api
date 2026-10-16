@@ -5,6 +5,7 @@ from functools import lru_cache
 from typing import Literal, Self
 from urllib.parse import parse_qsl, urlencode
 
+from cryptography.fernet import Fernet
 from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
@@ -12,6 +13,10 @@ from sqlalchemy import URL
 Environment = Literal["local", "development", "staging", "production"]
 
 SCHEMA_NAME_PATTERN = re.compile(r"[a-z_][a-z0-9_]{0,62}")
+INSECURE_DEV_JWT_SECRET = "dev-only-insecure-jwt-secret-do-not-deploy"
+# A valid Fernet key that is public, so it only works outside staging/production.
+INSECURE_DEV_TOTP_KEY = "ZGV2LW9ubHktaW5zZWN1cmUtdG90cC1rZXktMDAwMDA="
+MIN_JWT_SECRET_LENGTH = 32
 _LIBPQ_ONLY_PARAMS = frozenset({"channel_binding"})
 
 
@@ -34,7 +39,7 @@ class Settings(BaseSettings):
     # CORS — JSON list in env, e.g. CORS_ORIGINS=["http://localhost:3000"]
     CORS_ORIGINS: list[str] = []
 
-    # Database (see docs/WORKPLAN.md §0)
+    # Database (rules: README, "Database")
     # Connection parts, used to build DATABASE_URL when it is not set. The password is
     # URL-escaped for you, so special characters (@, :, /, #) are fine here.
     DB_HOST: str = "localhost"
@@ -61,9 +66,36 @@ class Settings(BaseSettings):
     DB_STATEMENT_TIMEOUT_MS: int = 30_000
     DB_ECHO: bool = False
 
-    # Redis (see docs/WORKPLAN.md §0.6): each developer runs their own, it is never shared.
+    # Redis (README, "Redis"): each developer runs their own, it is never shared.
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_TIMEOUT_SECONDS: float = 5.0
+
+    # Auth (see docs/modules/auth.md). The default secret only works outside staging/production.
+    JWT_SECRET: SecretStr = SecretStr(INSECURE_DEV_JWT_SECRET)
+    JWT_ALGORITHM: Literal["HS256"] = "HS256"
+    JWT_ISSUER: str = "notchs-api"
+    ACCESS_TOKEN_TTL_MINUTES: int = 15
+    REFRESH_TOKEN_TTL_DAYS: int = 30
+    # Encrypts counter phones' TOTP secrets in the database (Fernet key: 32 bytes, base64).
+    # Generate one: see .env.example.
+    TOTP_ENCRYPTION_KEY: SecretStr = SecretStr(INSECURE_DEV_TOTP_KEY)
+
+    # Email (Resend). With EMAIL_DRY_RUN=true nothing is sent: emails are written to the log.
+    EMAIL_DRY_RUN: bool = True
+    RESEND_API_KEY: SecretStr | None = None
+    EMAIL_FROM: str = "Notchs <no-reply@notchs.com>"
+
+    # Where emailed links point: the venue app's /set-password page, for example.
+    VENUE_APP_URL: str = "http://localhost:3000"
+    ADMIN_APP_URL: str = "http://localhost:3001"
+    # The customer site; the WhatsApp login link opens its /login/verify page.
+    CUSTOMER_APP_URL: str = "http://localhost:3002"
+    # Optional: who gets a "New venue application" email. Empty = nobody.
+    ADMIN_NOTIFY_EMAIL: str | None = None
+
+    # Cloudflare Turnstile (CAPTCHA) on public forms. TURNSTILE_DISABLED is for local work only.
+    TURNSTILE_SECRET: SecretStr | None = None
+    TURNSTILE_DISABLED: bool = False
 
     @field_validator("REDIS_URL")
     @classmethod
@@ -99,6 +131,41 @@ class Settings(BaseSettings):
             )
             self.DATABASE_URL = url.render_as_string(hide_password=False)
         return self
+
+    @model_validator(mode="after")
+    def _check_deployed_auth_settings(self) -> Self:
+        """Refuse to start staging/production with development-only auth settings."""
+        if self.ENVIRONMENT not in ("staging", "production"):
+            return self
+        secret = self.JWT_SECRET.get_secret_value()
+        if secret == INSECURE_DEV_JWT_SECRET or len(secret) < MIN_JWT_SECRET_LENGTH:
+            raise ValueError(f"JWT_SECRET must be at least {MIN_JWT_SECRET_LENGTH} characters")
+        if self.TOTP_ENCRYPTION_KEY.get_secret_value() == INSECURE_DEV_TOTP_KEY:
+            raise ValueError("TOTP_ENCRYPTION_KEY must be set to a real Fernet key")
+        if self.TURNSTILE_DISABLED:
+            raise ValueError("TURNSTILE_DISABLED is only allowed in local and development")
+        if not self.EMAIL_DRY_RUN and self.RESEND_API_KEY is None:
+            raise ValueError("RESEND_API_KEY is required when EMAIL_DRY_RUN is false")
+        if self.is_production and self.EMAIL_DRY_RUN:
+            raise ValueError("EMAIL_DRY_RUN must be false in production")
+        for name in ("VENUE_APP_URL", "ADMIN_APP_URL", "CUSTOMER_APP_URL"):
+            if not getattr(self, name).startswith("https://"):
+                raise ValueError(f"{name} must be an https:// address outside local/development")
+        return self
+
+    @field_validator("VENUE_APP_URL", "ADMIN_APP_URL", "CUSTOMER_APP_URL")
+    @classmethod
+    def _strip_trailing_slash(cls, value: str) -> str:
+        return value.rstrip("/")
+
+    @field_validator("TOTP_ENCRYPTION_KEY")
+    @classmethod
+    def _check_fernet_key(cls, value: SecretStr) -> SecretStr:
+        try:
+            Fernet(value.get_secret_value())
+        except ValueError as exc:
+            raise ValueError("TOTP_ENCRYPTION_KEY must be a Fernet key (32 bytes, base64)") from exc
+        return value
 
     @property
     def migration_database_url(self) -> str:

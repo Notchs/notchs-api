@@ -16,7 +16,7 @@ from pydantic import (
 
 # Human-readable public code, e.g. "VEN-7K3M9QX2": 3-letter table prefix + 8 Crockford
 # Base32 chars (no I, L, O, U). The UUID `id` stays the primary key; declare the code per
-# module as `<entity>_code: PublicCode`. See docs/WORKPLAN.md §1.1.
+# module as `<entity>_code: PublicCode`. See README, "IDs and public codes".
 PublicCode = Annotated[
     str,
     BeforeValidator(lambda v: v.strip().upper() if isinstance(v, str) else v),
