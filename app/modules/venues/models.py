@@ -152,7 +152,7 @@ class VenueMember(Entity):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Login (not in the sheet: login design is kept separately, see docs/modules/auth.md).
+    # Login (not in the table sheet, which keeps the login design separate).
     email: Mapped[str] = mapped_column(String(120), unique=True)
     # argon2id. NULL until the member sets a password through the emailed link.
     password_hash: Mapped[str | None] = mapped_column(String(255))

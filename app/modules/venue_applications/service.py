@@ -1,4 +1,4 @@
-"""The "apply as a venue" form: verify the email with a code, then submit (auth.md §2-§3).
+"""The "apply as a venue" form: verify the email with a code, then submit.
 
 Emails are returned, not sent: the router sends them after the response.
 """

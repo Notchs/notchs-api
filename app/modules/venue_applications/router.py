@@ -1,4 +1,4 @@
-"""`/venue-applications`: the public "apply as a venue" form (docs/modules/auth.md §2)."""
+"""`/venue-applications`: the public "apply as a venue" form."""
 
 from typing import Annotated
 

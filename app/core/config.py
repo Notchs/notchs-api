@@ -70,7 +70,8 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_TIMEOUT_SECONDS: float = 5.0
 
-    # Auth (see docs/modules/auth.md). The default secret only works outside staging/production.
+    # Auth (README, "Auth, email and CAPTCHA settings"). The default secret is for local work:
+    # staging and production refuse to start with it.
     JWT_SECRET: SecretStr = SecretStr(INSECURE_DEV_JWT_SECRET)
     JWT_ALGORITHM: Literal["HS256"] = "HS256"
     JWT_ISSUER: str = "notchs-api"

@@ -1,4 +1,4 @@
-"""Request and response bodies for the "apply as a venue" form (docs/modules/auth.md §2)."""
+"""Request and response bodies for the "apply as a venue" form."""
 
 import uuid
 from datetime import datetime

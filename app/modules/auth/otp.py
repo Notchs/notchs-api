@@ -1,4 +1,4 @@
-"""Emailed 6-digit codes that prove someone owns an address (docs/modules/auth.md §3).
+"""Emailed 6-digit codes that prove someone owns an address.
 
 Nothing is stored in Postgres. Redis keys:
 

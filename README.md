@@ -77,12 +77,6 @@ To add a module:
 3. Include its router in `app/api/router.py`.
 4. Add tests under `tests/modules/<name>/`.
 
-## Documentation
-
-- [docs/modules/](docs/modules/): one design doc per module, written before the module is built.
-  - [auth.md](docs/modules/auth.md): venue apply, approval, email + password login, sessions.
-  - [customers.md](docs/modules/customers.md): customer profile, handles, privacy, delete my data.
-
 ## Getting started
 
 Development runs **only in Docker** — no local Python or virtualenv is needed.

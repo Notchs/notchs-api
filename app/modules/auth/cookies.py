@@ -1,4 +1,4 @@
-"""Session cookies (docs/modules/auth.md §5).
+"""Session cookies (README, "Sessions (for the frontends)").
 
 Each audience has its own pair, so the venue app, the admin panel and the customer site never
 overwrite each other (locally they all run on localhost, and cookies ignore the port):
