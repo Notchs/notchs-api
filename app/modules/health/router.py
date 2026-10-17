@@ -12,7 +12,7 @@ async def liveness() -> HealthResponse:
     return HealthService.liveness()
 
 
-@router.get("/ready", response_model=ReadinessResponse, summary="Readiness probe (checks DB)")
+@router.get("/ready", response_model=ReadinessResponse, summary="Readiness probe (DB + Redis)")
 async def readiness(service: HealthServiceDep, response: Response) -> ReadinessResponse:
     result = await service.readiness()
     if result.status != "ok":

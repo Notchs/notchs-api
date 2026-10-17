@@ -7,7 +7,21 @@ Import every module's models here so they are attached to `Base.metadata`, e.g.:
 
 from app.db.base import Base
 from app.modules.admin_users.models import AdminUser
+from app.modules.auth.models import AuthToken
 from app.modules.locations.models import Area, City
-from app.modules.venues.models import Venue
+from app.modules.users.models import User
+from app.modules.venue_applications.models import VenueApplication
+from app.modules.venues.models import CounterDevice, Venue, VenueMember
 
-__all__ = ["AdminUser", "Area", "Base", "City", "Venue"]
+__all__ = [
+    "AdminUser",
+    "Area",
+    "AuthToken",
+    "Base",
+    "City",
+    "CounterDevice",
+    "User",
+    "Venue",
+    "VenueApplication",
+    "VenueMember",
+]

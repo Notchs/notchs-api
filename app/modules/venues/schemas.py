@@ -50,6 +50,7 @@ class VenueCreate(BaseSchema):
     slug: Slug | None = None
     category: VenueCategory
     address: str | None = None
+    landmark: str | None = Field(None, max_length=120)
     latitude: Latitude | None = None
     longitude: Longitude | None = None
     geofence_radius_m: int = Field(DEFAULT_GEOFENCE_RADIUS_M, gt=0)
@@ -76,6 +77,7 @@ class VenueUpdate(BaseSchema):
     slug: Slug | None = None
     category: VenueCategory | None = None
     address: str | None = None
+    landmark: str | None = Field(None, max_length=120)
     latitude: Latitude | None = None
     longitude: Longitude | None = None
     geofence_radius_m: int | None = Field(None, gt=0)
@@ -112,6 +114,7 @@ class VenueOut(EntitySchema):
     slug: str
     category: VenueCategory
     address: str | None
+    landmark: str | None
     latitude: Decimal | None
     longitude: Decimal | None
     geofence_radius_m: int
@@ -135,6 +138,7 @@ class VenuePublicOut(BaseSchema):
     slug: str
     category: VenueCategory
     address: str | None
+    landmark: str | None
     latitude: Decimal | None
     longitude: Decimal | None
     description: str | None

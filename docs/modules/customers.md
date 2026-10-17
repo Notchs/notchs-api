@@ -1,6 +1,6 @@
 # User Module (`customers`): Plan
 
-Part of [WORKPLAN.md](../WORKPLAN.md). The "user" in Notchs is the **customer**: a person identified by their WhatsApp number who scans QR codes at venues. Venue staff (`venue_users`) belong to the `venues` module, and admins have their own table (see WORKPLAN S1). Both are out of scope here.
+Part of [WORKPLAN.md](../WORKPLAN.md). The "user" in Notchs is the **customer**: a person identified by their WhatsApp number who scans QR codes at venues. Venue logins (`venue_users`, one per venue) belong to the `auth` and `venues` modules, and admins have their own table (see WORKPLAN S1). Both are out of scope here.
 
 **Code location:** `app/modules/customers/`
 **Depends on:** `core/`, `shared/`, `cities` and `areas` tables, `auth` module (tokens and cookies), `whatsapp` client.
@@ -52,7 +52,7 @@ Conventions from the spec apply. Every column is `NOT NULL` unless marked nullab
 | `consent_at` | timestamptz | | | spec | When the first scan happened, and with it acceptance of the privacy policy linked in the first reply. |
 | `consent_version` | text | | | **new** | Privacy-policy version accepted, e.g. `2026-10`. DPDP needs proof of *what* was agreed. |
 | `preferred_language` | enum `language_code` (`en`, `hi`, `gu`) | | `en` | **new** | Cheap to add now. Bot replies stay English for MVP, but Gujarati and Hindi templates can come later without a migration. |
-| `marketing_opt_out_at` | timestamptz | yes | | **new** | Set by `STOP`, cleared by `START`. The monthly Notch template is not sent while this is set. Protects the WhatsApp number's quality rating. |
+| `marketing_opt_out_at` | timestamptz | yes | | **new** | Set by `STOP`, cleared by `START`. No business-initiated template is sent while this is set. The MVP sends none (messages we start cost money), so this is groundwork for later. Protects the WhatsApp number's quality rating. |
 | `is_blocked` | boolean | | `false` | **new** | Admin can block abusive accounts. Blocked customers get a neutral reply and no stamps. |
 | `blocked_reason` | text | yes | | **new** | Internal note, admin-only. |
 | `last_active_at` | timestamptz | | `now()` | spec | Updated on any inbound message or authenticated API call (at most once per minute, see §7). |
@@ -94,8 +94,10 @@ Indexes: unique (`token_hash`), (`subject_type`, `subject_id`), (`family_id`) WH
 ```
 language_code       : en, hi, gu
 auth_subject_type   : customer, venue_user, admin
-auth_token_purpose  : login_link, device_pairing, refresh
+auth_token_purpose  : login_link, device_pairing, refresh, set_password, password_reset
 ```
+
+`set_password` and `password_reset` are used by venue users and admins, never by customers. See [auth.md](auth.md).
 
 ### 2.4 DDL (reference: Alembic migration 0001 generates the equivalent)
 
@@ -254,10 +256,16 @@ Changing the display name does **not** regenerate the handle, so shared links ke
 
 ### 4.3 Login link (customer side)
 
-- Sent automatically after the first stamp, and whenever the customer sends `LOGIN`.
+A customer's identity is their WhatsApp number, so the **only** way to log in is to send a message from that number. There is no email or password signup for customers.
+
+- The link is sent in the bot's reply, so it is always inside the 24-hour customer-initiated window and costs nothing. It is sent automatically after the first stamp, and whenever the customer sends `LOGIN`.
+- The website's login page has one button, **Login with WhatsApp**, which opens `https://wa.me/<number>?text=LOGIN`. The web page never takes a phone number and never sends anything itself (that would be a business-initiated message).
 - `LOGIN` is rate-limited: Redis `rl:login:{customer_id}`, 3 per 15 minutes.
-- `auth.service.issue_login_link(subject=customer)` → `https://api.notchs.com/api/v1/auth/link/<token>` → sets cookies → redirects to `https://notchs.com/me`.
+- `auth.service.issue_login_link(subject=customer)` creates a `login_link` token (15 min, single use) and the bot sends `https://notchs.com/login/verify?token=<token>`.
+- That page does not log anyone in on load. It sends `POST /auth/customer/consume {token}`, which sets the session cookies. The frontend then redirects to `/me`. (Link previews and prefetching would otherwise burn the token.)
+- Sessions last 30 days (rotating refresh token, see [auth.md §4](auth.md#4-sessions)). A new device or an expired session means sending `LOGIN` again.
 - Blocked or deleted customers get no link.
+- A customer who changes phone number becomes a new customer. Moving an account is out of scope for the pilot.
 
 ### 4.4 Keywords handled by this module
 
@@ -266,6 +274,7 @@ Matched case-insensitively on the whole message after trimming:
 | Keyword | Action |
 |---|---|
 | `LOGIN` | Login link (via auth) |
+| `WRAP` | Replies with the link to their latest wrap (replaces the monthly template message, see below) |
 | `STOP` | `marketing_opt_out_at = now()`, confirm. Transactional replies to their own scans still work. |
 | `START` | `marketing_opt_out_at = NULL`, confirm |
 | `NAME` | Restart the name-capture prompt |
@@ -423,7 +432,7 @@ app/modules/customers/
     service.py     # get_or_create_by_phone, next_founding_number, touch_activity,
                    # confirm_name, update_profile, delete_customer, set_marketing_opt_out,
                    # block/unblock, get_public_profile
-    bot.py         # name-capture conversation + LOGIN/STOP/START/NAME handlers
+    bot.py         # name-capture conversation + LOGIN/WRAP/STOP/START/NAME handlers
     router.py      # /me, /me/visits, /me/handle-availability, /u/{handle}
 ```
 
@@ -457,7 +466,8 @@ Redis keys used by this module:
 - `DELETE /me`: every row in §6 is changed as specified, tokens gone, same phone can register again as a new customer.
 - Blocked customer: `/me` → 403, scan → neutral reply, no visit.
 - Name capture: tap Use name / type name / ignore paths via `/dev/simulate-inbound`.
-- `STOP` → no monthly wrap template sent. `START` → sent again.
+- `STOP` sets the opt-out and `START` clears it. `WRAP` returns the latest wrap link, and a customer with no wrap yet gets a friendly reply.
+- `LOGIN` link: consumed once through `POST /auth/customer/consume`, a second use and an expired token fail, the 4th request in 15 minutes is rate-limited, blocked and deleted customers get no link.
 
 ---
 
@@ -472,7 +482,7 @@ Redis keys used by this module:
 | C5 | `current_customer` dependency + activity throttle | S | auth 1.13 |
 | C6 | `GET/PATCH /me`, handle availability, schemas | M | C4, C5 |
 | C7 | `GET /u/{handle}`, `GET /me/visits` | S | C6, visits table |
-| C8 | `bot.py`: name capture, LOGIN, STOP/START/NAME | M | C4, WhatsApp client, worker |
+| C8 | `bot.py`: name capture, LOGIN, WRAP, STOP/START/NAME | M | C4, WhatsApp client, worker |
 | C9 | `DELETE /me` anonymisation + tests | M | C6; touches wraps, messages, rewards tables |
 | C10 | Admin: block/unblock, rename customer | S | C6, admin auth |
 | C11 | Seed: 3 test customers on the shared DB (upsert by phone, numbers in the `+91000000000x` range so they never collide with real numbers) | S | C4 |
