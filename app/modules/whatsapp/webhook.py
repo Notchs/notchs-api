@@ -105,17 +105,9 @@ def _inbound(
     button_id: str | None = None
     if kind == "text":
         message_type, body = MessageType.TEXT, _dict(raw.get("text")).get("body")
-    elif kind == "button":  # quick-reply button on a template message
-        button = _dict(raw.get("button"))
-        message_type, body, button_id = (
-            MessageType.BUTTON,
-            button.get("text"),
-            button.get("payload"),
-        )
-    elif kind == "interactive":  # reply buttons or list rows we sent
-        interactive = _dict(raw.get("interactive"))
-        reply = _dict(interactive.get("button_reply") or interactive.get("list_reply"))
-        message_type, body, button_id = MessageType.BUTTON, reply.get("title"), reply.get("id")
+    elif kind in ("button", "interactive"):
+        message_type = MessageType.BUTTON
+        body, button_id = _tapped(raw)
     elif kind == "image":
         message_type, body = MessageType.IMAGE, _dict(raw.get("image")).get("caption")
     else:  # audio, video, sticker, location, contacts, document, reaction, unsupported...
@@ -130,6 +122,26 @@ def _inbound(
         profile_name=names.get(sender) if isinstance(names.get(sender), str) else None,
         raw={"message": raw, "metadata": value.get("metadata")},
     )
+
+
+def _tapped(raw: dict[str, Any]) -> tuple[Any, Any]:
+    """(title, id) of the button a customer tapped; (None, None) if this is not a tap."""
+    kind = raw.get("type")
+    if kind == "button":  # quick-reply button on a template message
+        button = _dict(raw.get("button"))
+        return button.get("text"), button.get("payload")
+    if kind == "interactive":  # reply buttons or list rows we sent
+        interactive = _dict(raw.get("interactive"))
+        reply = _dict(interactive.get("button_reply") or interactive.get("list_reply"))
+        return reply.get("title"), reply.get("id")
+    return None, None
+
+
+def button_id_of(payload: Any) -> str | None:
+    """The tapped button's id, read back from a stored inbound message
+    (`whatsapp_messages.payload`, which keeps Meta's message as `payload["message"]`)."""
+    _, button_id = _tapped(_dict(_dict(payload).get("message")))
+    return button_id if isinstance(button_id, str) else None
 
 
 def _status(raw: dict[str, Any]) -> StatusUpdate | None:

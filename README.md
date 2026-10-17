@@ -307,8 +307,8 @@ What the bot replies:
 | Customer sends | Bot |
 |---|---|
 | Their first message | Creates the customer (the phone number is their identity) |
-| `LOGIN` | A single-use passport login link (15 minutes; at most 3 links per 15 minutes) |
-| Anything else | "Send LOGIN to get your passport login link" (at most once every 10 minutes) |
+| `LOGIN`, or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes) |
+| Anything else | A short help message with a **🔑 Login link** button (at most once every 10 minutes) |
 
 Blocked and deleted customers get no reply. With `WHATSAPP_DRY_RUN=true` replies, login links
 included, are written to the log instead of sent.
@@ -320,10 +320,12 @@ Logged in as an admin (role `admin`), outside production:
 ```
 POST /api/v1/dev/simulate-inbound
 {"phone": "98765 43210", "text": "LOGIN"}
+{"phone": "98765 43210", "button": "login"}   # a tap on the 🔑 Login link button
 ```
 
 The text goes through the same steps as a real WhatsApp message, and the response lists the
-bot's replies (`data.replies`), login links included. Nothing is sent to Meta.
+bot's replies (`data.replies`, buttons shown as `[title]` lines), login links included.
+Nothing is sent to Meta.
 
 ## Dropdowns
 

@@ -1,7 +1,8 @@
 """`/dev`: act as a WhatsApp customer without a phone or Meta. Never available in production.
 
-`POST /dev/simulate-inbound` sends a text through the same path as a real message (parsed,
-stored, handled by the bot) and returns the bot's replies, login links included. Nothing goes
+`POST /dev/simulate-inbound` sends a text, or a tap on one of the bot's buttons, through the
+same path as a real message (parsed, stored, handled by the bot) and returns the bot's replies,
+login links included. Nothing goes
 to Meta, whatever WHATSAPP_DRY_RUN says. Admins (role `admin`) only, because a reply can hold
 a working login link for the customer with that number.
 """
@@ -64,13 +65,28 @@ class CapturingClient:
 
 
 def _text_of(payload: dict[str, Any]) -> str:
-    if payload["type"] == "interactive":  # buttons: the text above them
-        return payload["interactive"]["body"]["text"]
+    """The reply as the customer would read it; buttons shown as `[title]` lines."""
+    if payload["type"] == "interactive":
+        interactive = payload["interactive"]
+        titles = [b["reply"]["title"] for b in interactive["action"]["buttons"]]
+        return "\n".join([interactive["body"]["text"], *(f"[{t}]" for t in titles)])
     return payload["text"]["body"]
 
 
-def meta_payload(phone_e164: str, text: str) -> dict[str, Any]:
-    """What Meta's webhook would deliver for this text."""
+def _message(text: str | None, button: str | None) -> dict[str, Any]:
+    if button is not None:  # a tap on one of our reply buttons
+        return {
+            "type": "interactive",
+            "interactive": {
+                "type": "button_reply",
+                "button_reply": {"id": button, "title": button},
+            },
+        }
+    return {"type": "text", "text": {"body": text}}
+
+
+def meta_payload(phone_e164: str, text: str | None, button: str | None = None) -> dict[str, Any]:
+    """What Meta's webhook would deliver for this text or button tap."""
     return {
         "object": "whatsapp_business_account",
         "entry": [
@@ -85,8 +101,7 @@ def meta_payload(phone_e164: str, text: str) -> dict[str, Any]:
                                 {
                                     "from": phone_e164.removeprefix("+"),
                                     "id": f"{SIMULATED_ID_PREFIX}{uuid.uuid4()}",
-                                    "type": "text",
-                                    "text": {"body": text},
+                                    **_message(text, button),
                                 }
                             ],
                         },
@@ -100,7 +115,8 @@ def meta_payload(phone_e164: str, text: str) -> dict[str, Any]:
 @router.post(
     "/simulate-inbound",
     response_model=CustomResponse[SimulatedInboundOut],
-    summary="Send a WhatsApp text as a customer and get the bot's replies (not in production)",
+    summary="Send a WhatsApp text or button tap as a customer, get the bot's replies "
+    "(not in production)",
 )
 async def simulate_inbound(
     body: SimulateInboundIn,
@@ -109,7 +125,7 @@ async def simulate_inbound(
     processor: ProcessorDep,
 ) -> CustomResponse[SimulatedInboundOut]:
     stored = await WhatsAppWebhookService(session).store(
-        parse_webhook(meta_payload(body.phone, body.text))
+        parse_webhook(meta_payload(body.phone, body.text, body.button))
     )
     await session.commit()
     (message_id,) = stored.new_message_ids
