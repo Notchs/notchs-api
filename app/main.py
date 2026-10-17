@@ -8,8 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import settings
-from app.core.exceptions import register_exception_handlers
+from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
+from app.core.redis import check_redis, redis_client
 from app.db.session import check_connection, engine
 from app.middleware.request_context import RequestContextMiddleware
 
@@ -36,7 +37,18 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         db["schema"],
         db["version"],
     )
+    try:
+        cache = await check_redis()
+    except Exception:
+        logger.exception("Could not connect to Redis; check REDIS_URL in .env")
+        await redis_client.aclose()
+        await engine.dispose()
+        raise
+    logger.info(
+        "Connected to Redis at %s (db %s, version %s)", cache["host"], cache["db"], cache["version"]
+    )
     yield
+    await redis_client.aclose()
     await engine.dispose()
     logger.info("Shutdown complete")
 

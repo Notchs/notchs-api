@@ -1,6 +1,6 @@
 """Identifier helpers: UUIDv7 primary keys and human-readable public codes.
 
-See docs/WORKPLAN.md §1.1 for the rules and the prefix list.
+Rules and the prefix list: README, "IDs and public codes".
 """
 
 import re
