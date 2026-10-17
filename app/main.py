@@ -1,5 +1,7 @@
 """Application factory and ASGI entrypoint (`uvicorn app.main:app`)."""
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -13,6 +15,7 @@ from app.core.logging import get_logger, setup_logging
 from app.core.redis import check_redis, redis_client
 from app.db.session import check_connection, engine
 from app.middleware.request_context import RequestContextMiddleware
+from app.modules.whatsapp.processor import get_inbound_processor, run_sweeper
 
 logger = get_logger(__name__)
 
@@ -47,7 +50,17 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "Connected to Redis at %s (db %s, version %s)", cache["host"], cache["db"], cache["version"]
     )
+    sweeper = None
+    if settings.WHATSAPP_SWEEP_INTERVAL_SECONDS > 0:
+        sweeper = asyncio.create_task(
+            run_sweeper(get_inbound_processor(), settings.WHATSAPP_SWEEP_INTERVAL_SECONDS),
+            name="whatsapp-sweeper",
+        )
     yield
+    if sweeper is not None:
+        sweeper.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sweeper
     await redis_client.aclose()
     await engine.dispose()
     logger.info("Shutdown complete")
