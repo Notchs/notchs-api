@@ -1,6 +1,9 @@
 """Phone numbers in E.164 form (`+919876543210`), the format every phone column stores."""
 
 import re
+from typing import Annotated
+
+from pydantic import AfterValidator, Field
 
 E164 = re.compile(r"\+[1-9][0-9]{7,14}")
 _INDIAN_MOBILE = re.compile(r"[6-9][0-9]{9}")
@@ -27,3 +30,12 @@ def normalize_phone(value: str) -> str:
             raise ValueError("Enter a valid 10-digit Indian mobile number")
         return digits
     raise ValueError("Enter a valid phone number, e.g. 98765 43210 or +91 98765 43210")
+
+
+def masked_phone(phone: str) -> str:
+    """For logs: only the last 4 digits, e.g. `…3210`."""
+    return f"…{phone[-4:]}"
+
+
+# A request field: any common way of typing a number, stored and returned as E.164.
+Phone = Annotated[str, Field(max_length=32), AfterValidator(normalize_phone)]

@@ -12,6 +12,7 @@ from app.modules.locations.models import Area, City
 from app.modules.users.models import User
 from app.modules.venue_applications.models import VenueApplication
 from app.modules.venues.models import CounterDevice, Venue, VenueMember
+from app.modules.whatsapp.models import WhatsAppMessage
 
 __all__ = [
     "AdminUser",
@@ -24,4 +25,5 @@ __all__ = [
     "Venue",
     "VenueApplication",
     "VenueMember",
+    "WhatsAppMessage",
 ]
