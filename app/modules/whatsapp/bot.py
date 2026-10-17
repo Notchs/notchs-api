@@ -35,8 +35,11 @@ from app.modules.whatsapp.webhook import button_id_of
 logger = get_logger(__name__)
 
 LOGIN_COMMAND = "LOGIN"
-# Help and "too many links" replies: once per customer per window, so nobody is flooded.
+# Help and "too many links" replies: each at most once per customer per window, so nobody is
+# flooded. Separate windows: a help reply never silences the "too many links" answer.
 NOTICE_EVERY_SECONDS = 10 * 60
+HELP_NOTICE = "help"
+TOO_MANY_LINKS_NOTICE = "too_many_links"
 
 LINK_MINUTES = int(lifetime(TokenType.MAGIC_LINK).total_seconds() // 60)
 LOGIN_REPLY = (
@@ -54,8 +57,8 @@ HELP_REPLY = (
 LOGIN_BUTTON = ReplyButton(id="login", title="🔑 Login link")
 
 
-def _notice_key(user: User) -> str:
-    return f"wa:notice:{user.id}"
+def _notice_key(notice: str, user: User) -> str:
+    return f"wa:notice:{notice}:{user.id}"
 
 
 def is_login(message: WhatsAppMessage) -> bool:
@@ -101,20 +104,21 @@ class WhatsAppBot:
         sender = WhatsAppSender(session, self.client)
         if is_login(message):
             await self._login(session, sender, user)
-        elif await self._notice_allowed(user):
+        elif await self._notice_allowed(HELP_NOTICE, user):
             await sender.send_buttons(user.phone_e164, HELP_REPLY, [LOGIN_BUTTON], user_id=user.id)
 
     async def _login(self, session: AsyncSession, sender: WhatsAppSender, user: User) -> None:
         try:
             link = await CustomerAuthService(session, self.redis).issue_login_link(user)
         except AuthRateLimitedException:
-            if await self._notice_allowed(user):
+            if await self._notice_allowed(TOO_MANY_LINKS_NOTICE, user):
                 await sender.send_text(user.phone_e164, TOO_MANY_LINKS_REPLY, user_id=user.id)
             return
         except TokenInvalidException:  # blocked or deleted since we looked: no link
             return
         await sender.send_text(user.phone_e164, LOGIN_REPLY.format(link=link), user_id=user.id)
 
-    async def _notice_allowed(self, user: User) -> bool:
-        """True at most once per NOTICE_EVERY_SECONDS for this customer."""
-        return bool(await self.redis.set(_notice_key(user), "1", ex=NOTICE_EVERY_SECONDS, nx=True))
+    async def _notice_allowed(self, notice: str, user: User) -> bool:
+        """True at most once per NOTICE_EVERY_SECONDS for this notice and customer."""
+        key = _notice_key(notice, user)
+        return bool(await self.redis.set(key, "1", ex=NOTICE_EVERY_SECONDS, nx=True))
