@@ -1,8 +1,9 @@
 """What the bot does with one incoming WhatsApp message.
 
     every message   find the customer by phone, or create them (their first message is sign-up)
-    LOGIN           reply with a single-use passport login link (3 per 15 minutes)
-    anything else   a short help reply, at most once every 10 minutes per customer
+    LOGIN           reply with a single-use passport login link (3 per 15 minutes); typed, or a
+                    tap on the help reply's "Login link" button
+    anything else   a short help reply with that button, at most once every 10 minutes per customer
 
 Blocked and deleted customers get no reply. Check-in codes (`NOTCH KAHWA 482913`) get the help
 reply for now; stamping comes with the check-ins module.
@@ -27,7 +28,9 @@ from app.modules.auth.exceptions import AuthRateLimitedException, TokenInvalidEx
 from app.modules.auth.tokens import lifetime
 from app.modules.users.models import User, UserStatus
 from app.modules.whatsapp.models import MessageType, WhatsAppMessage
+from app.modules.whatsapp.payloads import ReplyButton
 from app.modules.whatsapp.sender import WhatsAppSender
+from app.modules.whatsapp.webhook import button_id_of
 
 logger = get_logger(__name__)
 
@@ -44,7 +47,11 @@ TOO_MANY_LINKS_REPLY = (
     "You have asked for a lot of login links. "
     f"Please try again in {LINK_WINDOW_SECONDS // 60} minutes."
 )
-HELP_REPLY = f"Hi from Notchs! Send {LOGIN_COMMAND} to get your passport login link."
+HELP_REPLY = (
+    f"Hi from Notchs! Tap the button to get your passport login link, or send {LOGIN_COMMAND}."
+)
+# The help reply's button. Its id comes back when the customer taps it.
+LOGIN_BUTTON = ReplyButton(id="login", title="🔑 Login link")
 
 
 def _notice_key(user: User) -> str:
@@ -52,6 +59,10 @@ def _notice_key(user: User) -> str:
 
 
 def is_login(message: WhatsAppMessage) -> bool:
+    if message.message_type == MessageType.BUTTON and (
+        button_id_of(message.payload) == LOGIN_BUTTON.id
+    ):
+        return True
     return (
         message.message_type in (MessageType.TEXT, MessageType.BUTTON)
         and (message.body or "").strip().upper() == LOGIN_COMMAND
@@ -91,7 +102,7 @@ class WhatsAppBot:
         if is_login(message):
             await self._login(session, sender, user)
         elif await self._notice_allowed(user):
-            await sender.send_text(user.phone_e164, HELP_REPLY, user_id=user.id)
+            await sender.send_buttons(user.phone_e164, HELP_REPLY, [LOGIN_BUTTON], user_id=user.id)
 
     async def _login(self, session: AsyncSession, sender: WhatsAppSender, user: User) -> None:
         try:
