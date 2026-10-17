@@ -1,4 +1,4 @@
-"""Venue app login and account: /venue/auth/*, /venue/me, /venue/me/email/* (auth.md §2)."""
+"""Venue app login and account: /venue/auth/*, /venue/me, /venue/me/email/*."""
 
 from typing import Annotated
 

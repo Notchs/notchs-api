@@ -70,7 +70,8 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     REDIS_TIMEOUT_SECONDS: float = 5.0
 
-    # Auth (see docs/modules/auth.md). The default secret only works outside staging/production.
+    # Auth (README, "Auth, email, CAPTCHA and WhatsApp settings"). The default secret is
+    # for local work: staging and production refuse to start with it.
     JWT_SECRET: SecretStr = SecretStr(INSECURE_DEV_JWT_SECRET)
     JWT_ALGORITHM: Literal["HS256"] = "HS256"
     JWT_ISSUER: str = "notchs-api"
@@ -96,6 +97,20 @@ class Settings(BaseSettings):
     # Cloudflare Turnstile (CAPTCHA) on public forms. TURNSTILE_DISABLED is for local work only.
     TURNSTILE_SECRET: SecretStr | None = None
     TURNSTILE_DISABLED: bool = False
+
+    # WhatsApp Cloud API (Meta). With WHATSAPP_DRY_RUN=true nothing is sent: replies go to the log.
+    WHATSAPP_DRY_RUN: bool = True
+    WHATSAPP_PHONE_NUMBER_ID: str | None = None
+    WHATSAPP_ACCESS_TOKEN: SecretStr | None = None
+    WHATSAPP_API_VERSION: str = "v23.0"
+    WHATSAPP_GRAPH_URL: str = "https://graph.facebook.com"
+    # Webhook: Meta signs every call with the app secret (App settings -> Basic). The verify
+    # token is any random string, entered in Meta's "Configure Webhooks" form too.
+    WHATSAPP_APP_SECRET: SecretStr | None = None
+    WHATSAPP_VERIFY_TOKEN: SecretStr | None = None
+    # How often the API looks for incoming messages left unhandled (e.g. after a restart).
+    # 0 turns the sweep off.
+    WHATSAPP_SWEEP_INTERVAL_SECONDS: float = 60
 
     @field_validator("REDIS_URL")
     @classmethod
@@ -146,6 +161,13 @@ class Settings(BaseSettings):
             raise ValueError("TURNSTILE_DISABLED is only allowed in local and development")
         if not self.EMAIL_DRY_RUN and self.RESEND_API_KEY is None:
             raise ValueError("RESEND_API_KEY is required when EMAIL_DRY_RUN is false")
+        if self.is_production and self.WHATSAPP_DRY_RUN:
+            raise ValueError("WHATSAPP_DRY_RUN must be false in production")
+        if self.is_production and not (self.WHATSAPP_APP_SECRET and self.WHATSAPP_VERIFY_TOKEN):
+            # Without them every webhook call from Meta is refused: no message would arrive.
+            raise ValueError(
+                "WHATSAPP_APP_SECRET and WHATSAPP_VERIFY_TOKEN are required in production"
+            )
         if self.is_production and self.EMAIL_DRY_RUN:
             raise ValueError("EMAIL_DRY_RUN must be false in production")
         for name in ("VENUE_APP_URL", "ADMIN_APP_URL", "CUSTOMER_APP_URL"):
@@ -157,6 +179,21 @@ class Settings(BaseSettings):
     @classmethod
     def _strip_trailing_slash(cls, value: str) -> str:
         return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def _check_whatsapp_settings(self) -> Self:
+        if not self.WHATSAPP_DRY_RUN and not (
+            self.WHATSAPP_PHONE_NUMBER_ID and self.WHATSAPP_ACCESS_TOKEN
+        ):
+            raise ValueError(
+                "WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN are required when "
+                "WHATSAPP_DRY_RUN is false"
+            )
+        if not re.fullmatch(r"v\d+\.\d+", self.WHATSAPP_API_VERSION):
+            raise ValueError("WHATSAPP_API_VERSION must look like v23.0")
+        if self.WHATSAPP_SWEEP_INTERVAL_SECONDS < 0:
+            raise ValueError("WHATSAPP_SWEEP_INTERVAL_SECONDS must be 0 (off) or more")
+        return self
 
     @field_validator("TOTP_ENCRYPTION_KEY")
     @classmethod

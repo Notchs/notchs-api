@@ -1,4 +1,4 @@
-"""Customer login: a single-use link sent by the WhatsApp bot (docs/modules/customers.md §4.3).
+"""Customer login: a single-use link sent by the WhatsApp bot.
 
 The customer sends LOGIN on WhatsApp; the bot calls `issue_login_link` and replies with the
 link; the customer site's /login/verify page POSTs the token to `/auth/customer/consume`.

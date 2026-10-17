@@ -32,7 +32,7 @@ notchs-api/
 │   │   ├── dependencies.py     # DBSession, RedisClient, Pagination
 │   │   ├── repository.py       # Generic async CRUD repository
 │   │   └── service.py          # Generic CRUD service (get/list/create/update/delete)
-│   ├── clients/                # External services: email (Resend), CAPTCHA (Turnstile)
+│   ├── clients/                # External services: email (Resend), CAPTCHA (Turnstile), WhatsApp (Meta)
 │   ├── middleware/
 │   │   └── request_context.py  # X-Request-ID + request timing logs
 │   └── modules/                # One package per feature
@@ -43,7 +43,8 @@ notchs-api/
 │       ├── locations/          # Cities and areas (models only)
 │       ├── users/              # Customers (model only)
 │       ├── venue_applications/ # "Apply as a venue" form + admin review (approve/reject)
-│       └── venues/             # Venues, venue members, counter phone pairing and display
+│       ├── venues/             # Venues, venue members, counter phone pairing and display
+│       └── whatsapp/           # WhatsApp: messages table, sender, webhook, processing
 ├── alembic/                    # Database migrations
 ├── tests/                      # Mirrors app/ layout
 ├── .devcontainer/              # VS Code Dev Container config
@@ -76,12 +77,6 @@ To add a module:
 2. Import its models in `app/db/models.py` (for migrations).
 3. Include its router in `app/api/router.py`.
 4. Add tests under `tests/modules/<name>/`.
-
-## Documentation
-
-- [docs/modules/](docs/modules/): one design doc per module, written before the module is built.
-  - [auth.md](docs/modules/auth.md): venue apply, approval, email + password login, sessions.
-  - [customers.md](docs/modules/customers.md): customer profile, handles, privacy, delete my data.
 
 ## Getting started
 
@@ -189,7 +184,7 @@ docker compose exec redis redis-cli            # inspect keys
 docker compose exec redis redis-cli FLUSHDB    # wipe your local Redis
 ```
 
-## Auth, email and CAPTCHA settings
+## Auth, email, CAPTCHA and WhatsApp settings
 
 Local work needs none of these: the defaults use a built-in development JWT secret, write
 emails to the log instead of sending them, and `.env.example` skips the CAPTCHA. Staging and
@@ -206,6 +201,12 @@ production refuse to start until the real values are set.
 | `ADMIN_NOTIFY_EMAIL` | Optional. Gets a "New venue application" email (no applicant contact details in it). |
 | `TURNSTILE_SECRET` | Cloudflare Turnstile secret for the CAPTCHA on public forms. |
 | `TURNSTILE_DISABLED` | `true` skips the CAPTCHA. Local and development only. |
+| `WHATSAPP_DRY_RUN` | `true`: WhatsApp replies are written to the log instead of sent (phone numbers masked). Must be `false` in production. |
+| `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN` | From Meta (WhatsApp → API Setup). Needed when `WHATSAPP_DRY_RUN=false`. |
+| `WHATSAPP_API_VERSION` | Meta Graph API version, e.g. `v23.0`. |
+| `WHATSAPP_APP_SECRET` | Meta app secret (App settings → Basic). Checks the signature on every webhook call; without it, all are refused. Required in production. |
+| `WHATSAPP_VERIFY_TOKEN` | Any random string; also entered in Meta's webhook form. Required in production. |
+| `WHATSAPP_SWEEP_INTERVAL_SECONDS` | How often the API retries incoming messages left unhandled (default `60`; `0` turns it off). |
 
 ### Sessions (for the frontends)
 
@@ -282,6 +283,47 @@ docker compose exec api python -m app.cli admin-link --email you@notchs.com   # 
 
 They use the database and schema in `.env`. `create-admin` prints the set-password link (and emails
 it unless `EMAIL_DRY_RUN=true`); `--role reviewer` makes a view-only admin.
+
+## WhatsApp webhook
+
+Meta delivers incoming WhatsApp messages and delivery statuses to
+`/api/v1/webhooks/whatsapp`. In Meta (WhatsApp → Configuration → Webhook) set:
+
+- **Callback URL:** `https://<api host>/api/v1/webhooks/whatsapp`
+- **Verify token:** the value of `WHATSAPP_VERIFY_TOKEN`
+- **Webhook fields:** subscribe to `messages`
+
+Every call must carry Meta's `X-Hub-Signature-256` signature (made with `WHATSAPP_APP_SECRET`).
+Messages are stored in `whatsapp_messages` once each, even if Meta delivers them again;
+statuses (`delivered`, `read`, `failed`) update the messages we sent and never move backwards.
+
+After answering Meta, the API handles each new message once (the row is locked while it runs).
+A message whose handling fails is retried, at most 3 times, then marked
+`error_code = processing_failed`. Every `WHATSAPP_SWEEP_INTERVAL_SECONDS` (and at startup) the
+API also picks up messages left unhandled, e.g. by a restart.
+
+What the bot replies:
+
+| Customer sends | Bot |
+|---|---|
+| Their first message | Creates the customer (the phone number is their identity) |
+| `LOGIN` | A single-use passport login link (15 minutes; at most 3 links per 15 minutes) |
+| Anything else | "Send LOGIN to get your passport login link" (at most once every 10 minutes) |
+
+Blocked and deleted customers get no reply. With `WHATSAPP_DRY_RUN=true` replies, login links
+included, are written to the log instead of sent.
+
+### Trying the bot without WhatsApp
+
+Logged in as an admin (role `admin`), outside production:
+
+```
+POST /api/v1/dev/simulate-inbound
+{"phone": "98765 43210", "text": "LOGIN"}
+```
+
+The text goes through the same steps as a real WhatsApp message, and the response lists the
+bot's replies (`data.replies`), login links included. Nothing is sent to Meta.
 
 ## Dropdowns
 

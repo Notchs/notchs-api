@@ -1,4 +1,4 @@
-"""Login sessions: a short-lived access JWT plus a rotating refresh token (auth.md §5).
+"""Login sessions: a short-lived access JWT plus a rotating refresh token.
 
 Refresh tokens are stored hashed in `auth_tokens` (token_type `refresh`). Every refresh marks
 the old token used and issues a new one in the same `family_id`. If an already-used token is

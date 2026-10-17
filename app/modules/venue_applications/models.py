@@ -1,4 +1,4 @@
-"""Applications from the public "apply as a venue" form. Not in the sheet (docs/modules/auth.md)."""
+"""Applications from the public "apply as a venue" form. Not in the table sheet."""
 
 import uuid
 from datetime import datetime

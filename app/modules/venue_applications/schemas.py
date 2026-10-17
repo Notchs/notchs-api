@@ -1,4 +1,4 @@
-"""Request and response bodies for the "apply as a venue" form (docs/modules/auth.md §2)."""
+"""Request and response bodies for the "apply as a venue" form."""
 
 import uuid
 from datetime import datetime
@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from pydantic import AfterValidator, Field, model_validator
 
-from app.common.phone import normalize_phone
+from app.common.phone import Phone
 from app.common.schemas import BaseSchema, EntitySchema, PublicCode
 from app.modules.auth.emails import Email
 from app.modules.venue_applications.models import ApplicationStatus
@@ -46,14 +46,9 @@ def check_google_maps_url(value: str) -> str:
     return url
 
 
-def check_phone(value: str) -> str:
-    return normalize_phone(value)
-
-
 GoogleMapsUrl = Annotated[
     str, Field(max_length=MAX_MAPS_URL_LENGTH), AfterValidator(check_google_maps_url)
 ]
-Phone = Annotated[str, Field(max_length=32), AfterValidator(check_phone)]
 
 
 class ApplicationCreate(BaseSchema):
