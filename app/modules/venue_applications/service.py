@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clients.email import EmailMessage
 from app.core import rate_limit
 from app.core.config import settings
+from app.modules.audit import service as audit
 from app.modules.auth import messages as auth_messages
 from app.modules.auth.emails import is_disposable, normalize_email
 from app.modules.auth.enums import OtpPurpose
@@ -35,6 +36,9 @@ DAY = 24 * 60 * 60
 CODE_PURPOSE_TEXT = "verify your email for your Notchs venue application"
 
 
+_APPLICATIONS = audit.Entity("venue_applications")  # before an application exists
+
+
 class VenueApplicationService:
     def __init__(self, session: AsyncSession, redis: Redis) -> None:
         self.session = session
@@ -48,11 +52,13 @@ class VenueApplicationService:
         if is_disposable(email):
             raise EmailNotAllowedException()
         code = await self.codes.issue(OtpPurpose.APPLICATION, email, ip=ip or "unknown")
+        await audit.record(self.session, audit.PUBLIC, "application.email_code_sent", _APPLICATIONS)
         return auth_messages.email_code_email(to=email, code=code, purpose=CODE_PURPOSE_TEXT)
 
     async def verify_code(self, email: str, code: str) -> str:
         """Check the code and return the verification token the form submits with."""
         await self.codes.verify(OtpPurpose.APPLICATION, email, code)
+        await audit.record(self.session, audit.PUBLIC, "application.email_verified", _APPLICATIONS)
         return await self.codes.issue_verification_token(email)
 
     async def submit(
@@ -95,6 +101,17 @@ class VenueApplicationService:
             raise ApplicationDuplicateException() from exc
 
         await self.codes.consume_verification_token(form.verification_token)
+        await audit.record(
+            self.session,
+            audit.PUBLIC,
+            "application.submitted",
+            application,
+            after={
+                "venue_name": application.venue_name,
+                "category": application.category,
+                "city_id": application.city_id,
+            },
+        )
         notice = (
             messages.new_application_email(
                 to=settings.ADMIN_NOTIFY_EMAIL, application=application, city=city.name

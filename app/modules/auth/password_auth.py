@@ -4,6 +4,10 @@ password. Shared by venue members and admins; each describes itself with an `Acc
 Emails are not sent from here. Methods that need one return the message, and the router
 sends it in the background after the response, so a request for a registered email takes
 the same time as one for an unknown email.
+
+Audit log: logins (and failed ones), passwords set or changed, reset requests and wrong current
+passwords. Failures are committed before the error is raised, so they are kept. Attempts while
+an email+IP is already locked out are not recorded again: the failures that locked it were.
 """
 
 import uuid
@@ -19,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clients.email import EmailMessage
 from app.core import rate_limit
 from app.core.logging import get_logger
+from app.modules.audit import service as audit
 from app.modules.auth.emails import normalize_email
 from app.modules.auth.enums import SubjectType, TokenType
 from app.modules.auth.exceptions import (
@@ -99,19 +104,27 @@ class PasswordAuthService[AccountT: PasswordAccount]:
         if account is None or account.password_hash is None:
             await verify_dummy_async(password)  # same time as a real check
             await self._count_failure(failures_key)
+            reason = "unknown_account" if account is None else "no_password"
+            await self._login_failed(reason, account)
             raise InvalidCredentialsException()
         if not await verify_password_async(account.password_hash, password):
             await self._count_failure(failures_key)
+            await self._login_failed("wrong_password", account)
             raise InvalidCredentialsException()
 
         # Only someone who knows the password learns that the account is switched off.
         if await self.kind.load_active(self.session, account.id) is None:
+            await self._login_failed("account_inactive", account)
             raise AccountInactiveException()
 
         await rate_limit.reset(self.redis, failures_key)
         if needs_rehash(account.password_hash):
             account.password_hash = await hash_password_async(password)
-        return await self._log_in(account, ip=ip, user_agent=user_agent)
+        login = await self._log_in(account, ip=ip, user_agent=user_agent)
+        await audit.record(
+            self.session, self._actor(account), "auth.login", account, after={"method": "password"}
+        )
+        return login
 
     async def set_password(
         self, raw_token: str, password: str, *, ip: str | None, user_agent: str | None
@@ -128,7 +141,17 @@ class PasswordAuthService[AccountT: PasswordAccount]:
 
         check_password_policy(password, email=account.email)
         account.password_hash = await hash_password_async(password)
-        await self.sessions.end_all(self.kind.subject_of(account))
+        ended = await self.sessions.end_all(self.kind.subject_of(account))
+        await audit.record(
+            self.session,
+            self._actor(account),
+            "auth.password_set",
+            account,
+            after={
+                "via": "invite" if token.token_type == TokenType.SET_PASSWORD else "reset",
+                "sessions_ended": ended,
+            },
+        )
         return await self._log_in(account, ip=ip, user_agent=user_agent)
 
     async def forgot_password(self, email: str, *, ip: str | None) -> EmailMessage | None:
@@ -153,7 +176,21 @@ class PasswordAuthService[AccountT: PasswordAccount]:
         account = await self._by_email(email)
         if account is None or await self.kind.load_active(self.session, account.id) is None:
             logger.info("Password reset asked for an unknown or inactive %s email", self.kind.key)
+            await audit.record(
+                self.session,
+                audit.PUBLIC,
+                "auth.password_reset_requested",
+                self._entity(account),
+                after={"result": "unknown_account" if account is None else "account_inactive"},
+            )
             return None
+        await audit.record(
+            self.session,
+            audit.PUBLIC,
+            "auth.password_reset_requested",
+            account,
+            after={"result": "email_sent"},
+        )
         raw = await self.tokens.issue(
             self.kind.subject_of(account), TokenType.PASSWORD_RESET, ip=ip
         )
@@ -169,6 +206,8 @@ class PasswordAuthService[AccountT: PasswordAccount]:
             account.password_hash, password
         ):
             await self._count_failure(key)
+            await audit.record(self.session, self._actor(account), "auth.reauth_failed", account)
+            await self.session.commit()  # kept although the request fails
             raise CurrentPasswordInvalidException()
         await rate_limit.reset(self.redis, key)
 
@@ -189,13 +228,38 @@ class PasswordAuthService[AccountT: PasswordAccount]:
         if current_password == new_password:
             raise PasswordInvalidException("Choose a password different from the current one.")
         account.password_hash = await hash_password_async(new_password)
-        await self.sessions.end_all(self.kind.subject_of(account))
+        ended = await self.sessions.end_all(self.kind.subject_of(account))
+        await audit.record(
+            self.session,
+            self._actor(account),
+            "auth.password_changed",
+            account,
+            after={"sessions_ended": ended},
+        )
         login = await self._log_in(account, ip=ip, user_agent=user_agent)
         return login, self.kind.changed_email(account)
 
     async def issue_set_password_token(self, account: AccountT) -> str:
         """Raw token for a "set your password" link (new venue, new admin)."""
         return await self.tokens.issue(self.kind.subject_of(account), TokenType.SET_PASSWORD)
+
+    def _actor(self, account: AccountT) -> audit.Actor:
+        return audit.Actor.of(self.kind.subject_type, account.id)
+
+    def _entity(self, account: AccountT | None) -> audit.Entity:
+        table: str = self.kind.model.__tablename__  # type: ignore[attr-defined]
+        return audit.Entity(table, account.id if account is not None else None)
+
+    async def _login_failed(self, reason: str, account: AccountT | None) -> None:
+        """Recorded and committed, because the request is about to fail."""
+        await audit.record(
+            self.session,
+            audit.PUBLIC,
+            "auth.login_failed",
+            self._entity(account),
+            after={"reason": reason, "method": "password"},
+        )
+        await self.session.commit()
 
     async def _by_email(self, email: str) -> AccountT | None:
         model: Any = self.kind.model

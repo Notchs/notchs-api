@@ -3,6 +3,8 @@
 The customer sends LOGIN on WhatsApp; the bot calls `issue_login_link` and replies with the
 link; the customer site's /login/verify page POSTs the token to `/auth/customer/consume`.
 Opening the link alone changes nothing, because WhatsApp link previews fetch it too.
+
+Audit log: every link sent or refused, every login with a link, and every failed one.
 """
 
 from dataclasses import dataclass
@@ -14,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import rate_limit
 from app.core.config import settings
+from app.modules.audit import service as audit
 from app.modules.auth.enums import SubjectType, TokenType
 from app.modules.auth.exceptions import AuthRateLimitedException, TokenInvalidException
 from app.modules.auth.one_time_tokens import OneTimeTokenService
@@ -52,6 +55,7 @@ class CustomerAuthService:
         or deleted customer, so the bot never sends them a link.
         """
         if await active_user(self.session, user.id) is None:
+            await self._record_link(user, "auth.login_link_refused", "account_inactive")
             raise TokenInvalidException()
         if not await rate_limit.hit(
             self.redis,
@@ -59,8 +63,10 @@ class CustomerAuthService:
             limit=MAX_LINKS_PER_WINDOW,
             window_seconds=LINK_WINDOW_SECONDS,
         ):
+            await self._record_link(user, "auth.login_link_refused", "rate_limited")
             raise AuthRateLimitedException("Too many login links. Try again in 15 minutes.")
         raw = await self.tokens.issue(user_subject(user), TokenType.MAGIC_LINK)
+        await self._record_link(user, "auth.login_link_sent", None)
         return login_link(raw)
 
     async def consume(
@@ -68,10 +74,42 @@ class CustomerAuthService:
     ) -> CustomerLogin:
         """Use the link once and start a session. Blocked and deleted customers get the same
         "invalid or expired" error as a bad link."""
-        token = await self.tokens.consume(raw_token, (TokenType.MAGIC_LINK,), SubjectType.USER)
+        try:
+            token = await self.tokens.consume(raw_token, (TokenType.MAGIC_LINK,), SubjectType.USER)
+        except TokenInvalidException:
+            await self._login_failed("invalid_link", None)
+            raise
         user = await active_user(self.session, token.user_id) if token.user_id else None
         if user is None:
+            await self._login_failed("account_inactive", token.user_id)
             raise TokenInvalidException()
         user.last_seen_at = datetime.now(UTC)
         issued = await self.sessions.start(user_subject(user), ip=ip, user_agent=user_agent)
+        await audit.record(
+            self.session,
+            audit.Actor.user(user),
+            "auth.login",
+            user,
+            after={"method": "whatsapp_link"},
+        )
         return CustomerLogin(user=user, session=issued)
+
+    async def _record_link(self, user: User, action: str, reason: str | None) -> None:
+        await audit.record(
+            self.session,
+            audit.Actor.user(user),
+            action,
+            user,
+            after={"reason": reason} if reason else None,
+        )
+
+    async def _login_failed(self, reason: str, user_id: object) -> None:
+        """Recorded and committed, because the request is about to fail."""
+        await audit.record(
+            self.session,
+            audit.PUBLIC,
+            "auth.login_failed",
+            audit.Entity("users", user_id),
+            after={"reason": reason, "method": "whatsapp_link"},
+        )
+        await self.session.commit()

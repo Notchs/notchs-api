@@ -34,9 +34,10 @@ notchs-api/
 │   │   └── service.py          # Generic CRUD service (get/list/create/update/delete)
 │   ├── clients/                # External services: email (Resend), CAPTCHA (Turnstile), WhatsApp (Meta)
 │   ├── middleware/
-│   │   └── request_context.py  # X-Request-ID + request timing logs
+│   │   └── request_context.py  # X-Request-ID, caller IP (for the audit log), request timing logs
 │   └── modules/                # One package per feature
-│       ├── admin_users/        # Notchs staff accounts (model only; login comes with auth)
+│       ├── admin_users/        # Notchs staff accounts, roles and permissions (login is in auth)
+│       ├── audit/              # Audit log: audit.record() for every module, GET /admin/audit-logs
 │       ├── auth/               # Sessions, venue + admin login, passwords, email codes
 │       ├── dropdowns/          # GET /dropdowns/{name}: option lists for every form
 │       ├── health/
@@ -282,7 +283,32 @@ docker compose exec api python -m app.cli admin-link --email you@notchs.com   # 
 ```
 
 They use the database and schema in `.env`. `create-admin` prints the set-password link (and emails
-it unless `EMAIL_DRY_RUN=true`); `--role reviewer` makes a view-only admin.
+it unless `EMAIL_DRY_RUN=true`). The new admin gets the **Owner** role unless `--role` names another
+role (any case), e.g. `--role reviewer`.
+
+## Admin roles and permissions
+
+Every admin has one role, and a role is a list of permissions ticked in the admin panel
+(`GET /api/v1/admin/permissions` lists them, grouped, with plain-language labels).
+
+- **Owner** (built in): every permission, including ones added later. It cannot be edited or
+  deleted.
+- **Reviewer** (built in, editable): can look at applications, venues, customers, WhatsApp, billing
+  and the dashboard; not the audit log or the team.
+- Any other role is made at `POST /api/v1/admin/roles` and edited or deleted at
+  `/api/v1/admin/roles/{id or ROL- code}`. A role still given to admins cannot be deleted.
+- **No self-promotion:** an admin can only give a role permissions they have themselves.
+- `GET /api/v1/admin/me` (and every admin login response) returns the admin's role and permissions,
+  so the panel can hide what they cannot use.
+
+In code, every admin endpoint needs a permission:
+
+```python
+CanReview = Annotated[AdminUser, Depends(require_permission(Permission.APPLICATIONS_REVIEW))]
+```
+
+Without it the answer is 403 `auth.permission_required`, with the permission in `details`. A module
+that adds admin endpoints adds its permissions to `app/modules/admin_users/permissions.py`.
 
 ## WhatsApp webhook
 
@@ -315,7 +341,7 @@ included, are written to the log instead of sent.
 
 ### Trying the bot without WhatsApp
 
-Logged in as an admin (role `admin`), outside production:
+Logged in as an admin whose role has `whatsapp.simulate` (the Owner has it), outside production:
 
 ```
 POST /api/v1/dev/simulate-inbound
@@ -326,6 +352,42 @@ POST /api/v1/dev/simulate-inbound
 The text goes through the same steps as a real WhatsApp message, and the response lists the
 bot's replies (`data.replies`, buttons shown as `[title]` lines), login links included.
 Nothing is sent to Meta.
+
+## Audit log
+
+Every change and every security event in the project is recorded in `audit_logs`, whoever did it:
+an admin, a venue login, a customer, a counter phone, the system (CLI, jobs) or someone not logged
+in (`public`, e.g. a failed login or the application form). Each entry has the actor, the action
+(`auth.login`, `application.approved`, `counter.paired`, ...), the record acted on, the changed
+fields before and after, the caller's IP and the request id.
+
+```python
+from app.modules.audit import service as audit
+
+await audit.record(
+    session,
+    audit.Actor.admin(admin),
+    "venue.status_changed",
+    venue,
+    before={"status": "signed"},
+    after={"status": "paused"},
+)
+```
+
+Rules for every module:
+
+- **Record every change and security event** (logins, failed logins, password and email changes,
+  sessions ended), plus sensitive reads such as showing a customer's phone number. Plain reads and
+  routine session refreshes are not recorded; the request log has them.
+- The entry is saved in the **same transaction** as the change. To keep an entry for a request that
+  fails (a failed login), commit before raising.
+- **Never** put phone numbers, passwords, tokens or secrets in `before`/`after`. `audit.clean()`
+  drops keys that look like them anyway.
+- The table is **append-only**: the app's database role can insert and read, nothing else. It is
+  partitioned by month (partitions up to December 2027, plus a default one).
+
+Admins read it at `GET /api/v1/admin/audit-logs` (newest first; filter by actor, action or prefix
+such as `auth.`, record, and time).
 
 ## Dropdowns
 

@@ -3,6 +3,9 @@
 Refresh tokens are stored hashed in `auth_tokens` (token_type `refresh`). Every refresh marks
 the old token used and issues a new one in the same `family_id`. If an already-used token is
 presented again later, someone else has a copy of it: the whole family is revoked.
+
+Audit log: logouts and reused refresh tokens. Ordinary refreshes are not recorded (one every 15
+minutes per logged-in person would drown everything else).
 """
 
 import uuid
@@ -15,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.modules.admin_users.models import AdminUser
+from app.modules.audit import service as audit
 from app.modules.auth.access_tokens import create_access_token
 from app.modules.auth.enums import SubjectType, TokenType
 from app.modules.auth.exceptions import NotAuthenticatedException
@@ -34,6 +38,24 @@ SUBJECT_COLUMN = {
     SubjectType.VENUE_MEMBER: AuthToken.venue_member_id,
     SubjectType.ADMIN: AuthToken.admin_user_id,
 }
+SUBJECT_TABLE = {
+    SubjectType.USER: "users",
+    SubjectType.VENUE_MEMBER: "venue_members",
+    SubjectType.ADMIN: "admin_users",
+}
+
+
+async def _record_for_token(session: AsyncSession, token: AuthToken, action: str) -> None:
+    """An audit entry about the account a refresh token belongs to."""
+    subject_type = SubjectType(token.subject_type)
+    subject_id = getattr(token, SUBJECT_COLUMN[subject_type].key)
+    await audit.record(
+        session,
+        audit.Actor.of(subject_type, subject_id),
+        action,
+        audit.Entity(SUBJECT_TABLE[subject_type], subject_id),
+        after={"session": str(token.family_id)},
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +141,8 @@ class SessionService:
                     token.subject_type,
                 )
                 await self._revoke_family(token.family_id, now)
-                # Keep the revocation even though this request fails.
+                await _record_for_token(self.session, token, "auth.session_reuse_detected")
+                # Keep the revocation (and its audit entry) even though this request fails.
                 await self.session.commit()
             raise NotAuthenticatedException()
 
@@ -146,6 +169,7 @@ class SessionService:
         )
         if token is not None:
             await self._revoke_family(token.family_id, datetime.now(UTC))
+            await _record_for_token(self.session, token, "auth.logout")
 
     async def end_all(self, subject: Subject, *, keep_family: uuid.UUID | None = None) -> int:
         """Revoke every session of `subject`, except `keep_family` (the one in use, if given).

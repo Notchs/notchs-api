@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clients.email import EmailMessage
 from app.common.dependencies import PaginationParams
 from app.modules.admin_users.models import AdminUser
+from app.modules.audit import service as audit
 from app.modules.auth.venue_auth import VenueAuthService
 from app.modules.locations.models import Area
 from app.modules.venue_applications import messages
@@ -127,6 +128,36 @@ class ApplicationReviewService:
         await self.session.flush()
         await self.session.refresh(application)  # updated_at is set by the database
         welcome = await VenueAuthService(self.session, self.redis).welcome_email(member, venue)
+
+        actor = audit.Actor.admin(admin)
+        await audit.record(
+            self.session,
+            actor,
+            "application.approved",
+            application,
+            before={"status": ApplicationStatus.PENDING},
+            after={"status": application.status, "venue_id": venue.id, "member_id": member.id},
+        )
+        await audit.record(
+            self.session,
+            actor,
+            "venue.created",
+            venue,
+            after={
+                "name": venue.name,
+                "status": venue.status,
+                "category": venue.category,
+                "area_id": venue.area_id,
+                "application_id": application.id,
+            },
+        )
+        await audit.record(
+            self.session,
+            actor,
+            "venue_member.created",
+            member,
+            after={"venue_id": venue.id, "role": member.role, "email": member.email},
+        )
         return application, venue, member, welcome
 
     async def reject(
@@ -137,6 +168,18 @@ class ApplicationReviewService:
         self._mark_reviewed(application, admin, ApplicationStatus.REJECTED)
         await self.session.flush()
         await self.session.refresh(application)  # updated_at is set by the database
+        await audit.record(
+            self.session,
+            audit.Actor.admin(admin),
+            "application.rejected",
+            application,
+            before={"status": ApplicationStatus.PENDING},
+            after={
+                "status": application.status,
+                "reason": application.rejection_reason,
+                "notified": body.notify,
+            },
+        )
         notice = (
             messages.application_rejected_email(application=application) if body.notify else None
         )

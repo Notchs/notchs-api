@@ -3,6 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.email import EmailClient, get_email_client
 from app.clients.turnstile import TurnstileClient, get_turnstile_client
@@ -10,6 +11,8 @@ from app.common.dependencies import DBSession, RedisClient
 from app.common.http import client_ip, user_agent
 from app.common.schemas import CustomResponse
 from app.modules.admin_users.models import AdminUser
+from app.modules.admin_users.roles import permissions_of
+from app.modules.admin_users.schemas import RoleBriefOut
 from app.modules.auth.admin_auth import AdminAuthService
 from app.modules.auth.cookies import set_session_cookies
 from app.modules.auth.dependencies import CurrentAdmin
@@ -37,18 +40,24 @@ EmailClientDep = Annotated[EmailClient, Depends(get_email_client)]
 TurnstileClientDep = Annotated[TurnstileClient, Depends(get_turnstile_client)]
 
 
-def _me(admin: AdminUser, login: PasswordLogin[AdminUser] | None = None) -> AdminMeOut:
+async def _me(
+    session: AsyncSession, admin: AdminUser, login: PasswordLogin[AdminUser] | None = None
+) -> AdminMeOut:
+    role, permissions = await permissions_of(session, admin)
     return AdminMeOut(
         id=admin.id,
         admin_user_code=admin.admin_user_code,
         name=admin.name,
         email=admin.email,
-        role=admin.role,
+        role=RoleBriefOut.model_validate(role),
+        permissions=sorted(permissions),
         session=SessionOut(access_expires_at=login.session.access_expires_at) if login else None,
     )
 
 
-def _logged_in(response: Response, login: PasswordLogin[AdminUser]) -> AdminMeOut:
+async def _logged_in(
+    session: AsyncSession, response: Response, login: PasswordLogin[AdminUser]
+) -> AdminMeOut:
     issued = login.session
     set_session_cookies(
         response,
@@ -58,17 +67,21 @@ def _logged_in(response: Response, login: PasswordLogin[AdminUser]) -> AdminMeOu
         refresh_token=issued.refresh_token,
         refresh_expires_at=issued.refresh_expires_at,
     )
-    return _me(login.account, login)
+    return await _me(session, login.account, login)
 
 
 @router.post("/auth/login", response_model=CustomResponse[AdminMeOut], summary="Log in")
 async def login(
-    body: LoginIn, request: Request, response: Response, auth: AdminAuthServiceDep
+    body: LoginIn,
+    request: Request,
+    response: Response,
+    auth: AdminAuthServiceDep,
+    session: DBSession,
 ) -> CustomResponse[AdminMeOut]:
     login = await auth.login(
         body.email, body.password, ip=client_ip(request), user_agent=user_agent(request)
     )
-    return CustomResponse(message="Logged in.", data=_logged_in(response, login))
+    return CustomResponse(message="Logged in.", data=await _logged_in(session, response, login))
 
 
 @router.post(
@@ -77,12 +90,16 @@ async def login(
     summary="Set a password from an emailed link (invite or reset) and log in",
 )
 async def set_password(
-    body: SetPasswordIn, request: Request, response: Response, auth: AdminAuthServiceDep
+    body: SetPasswordIn,
+    request: Request,
+    response: Response,
+    auth: AdminAuthServiceDep,
+    session: DBSession,
 ) -> CustomResponse[AdminMeOut]:
     login = await auth.set_password(
         body.token, body.password, ip=client_ip(request), user_agent=user_agent(request)
     )
-    return CustomResponse(message="Password set.", data=_logged_in(response, login))
+    return CustomResponse(message="Password set.", data=await _logged_in(session, response, login))
 
 
 @router.post(
@@ -111,8 +128,8 @@ async def forgot_password(
 
 
 @router.get("/me", response_model=CustomResponse[AdminMeOut], summary="The logged-in admin")
-async def me(admin: CurrentAdmin) -> CustomResponse[AdminMeOut]:
-    return CustomResponse(message="OK", data=_me(admin))
+async def me(admin: CurrentAdmin, session: DBSession) -> CustomResponse[AdminMeOut]:
+    return CustomResponse(message="OK", data=await _me(session, admin))
 
 
 @router.post(
@@ -128,6 +145,7 @@ async def change_password(
     background: BackgroundTasks,
     auth: AdminAuthServiceDep,
     email_client: EmailClientDep,
+    session: DBSession,
 ) -> CustomResponse[AdminMeOut]:
     login, notice = await auth.change_password(
         admin,
@@ -139,5 +157,5 @@ async def change_password(
     background.add_task(email_client.send, notice)
     return CustomResponse(
         message="Password changed. Other devices were logged out.",
-        data=_logged_in(response, login),
+        data=await _logged_in(session, response, login),
     )

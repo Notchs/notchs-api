@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clients.whatsapp import WhatsAppClient
 from app.common.phone import masked_phone
 from app.core.logging import get_logger
+from app.modules.audit import service as audit
 from app.modules.auth.customer_auth import LINK_WINDOW_SECONDS, CustomerAuthService
 from app.modules.auth.enums import TokenType
 from app.modules.auth.exceptions import AuthRateLimitedException, TokenInvalidException
@@ -75,13 +76,18 @@ def is_login(message: WhatsAppMessage) -> bool:
 async def find_or_create_customer(session: AsyncSession, phone_e164: str) -> User:
     """The customer with this phone number, created if new. Two first messages arriving at
     once still make one customer (the phone number is unique)."""
-    await session.execute(
+    created_id = await session.scalar(
         insert(User)
         .values(phone_e164=phone_e164)
         .on_conflict_do_nothing(index_elements=[User.phone_e164])
+        .returning(User.id)
     )
     user = await session.scalar(select(User).where(User.phone_e164 == phone_e164))
     assert user is not None
+    if created_id is not None:
+        await audit.record(
+            session, audit.Actor.user(user), "customer.created", user, after={"source": "whatsapp"}
+        )
     return user
 
 

@@ -4,6 +4,8 @@ from datetime import datetime
 from pydantic import ConfigDict, Field
 
 from app.common.schemas import BaseSchema, PublicCode
+from app.modules.admin_users.permissions import Permission
+from app.modules.admin_users.schemas import RoleBriefOut
 from app.modules.auth.emails import Email
 from app.modules.auth.passwords import MAX_PASSWORD_LENGTH
 from app.modules.venues.models import VenueStatus
@@ -85,7 +87,9 @@ class AdminMeOut(BaseSchema):
     admin_user_code: PublicCode
     name: str
     email: str
-    role: str
+    role: RoleBriefOut
+    # What the panel may show: buttons for anything else should be hidden.
+    permissions: list[Permission]
     session: SessionOut | None = None
 
 

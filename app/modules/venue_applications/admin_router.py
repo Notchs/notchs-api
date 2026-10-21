@@ -1,5 +1,5 @@
-"""`/admin/venue-applications`: the review queue. Admins and reviewers can view; only admins
-(role `admin`) can approve or reject."""
+"""`/admin/venue-applications`: the review queue. Viewing needs `applications.view`; approving
+and rejecting need `applications.review`."""
 
 from typing import Annotated
 
@@ -8,7 +8,9 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from app.clients.email import EmailClient, get_email_client
 from app.common.dependencies import DBSession, Pagination, RedisClient
 from app.common.schemas import CustomResponse, PaginatedResponse
-from app.modules.auth.dependencies import CurrentAdmin, CurrentFullAdmin
+from app.modules.admin_users.models import AdminUser
+from app.modules.admin_users.permissions import Permission
+from app.modules.auth.dependencies import require_permission
 from app.modules.venue_applications.admin_service import ApplicationReviewService
 from app.modules.venue_applications.models import ApplicationStatus
 from app.modules.venue_applications.schemas import (
@@ -27,6 +29,8 @@ def get_review_service(session: DBSession, redis: RedisClient) -> ApplicationRev
 
 ReviewServiceDep = Annotated[ApplicationReviewService, Depends(get_review_service)]
 EmailClientDep = Annotated[EmailClient, Depends(get_email_client)]
+QueueViewer = Annotated[AdminUser, Depends(require_permission(Permission.APPLICATIONS_VIEW))]
+Reviewer = Annotated[AdminUser, Depends(require_permission(Permission.APPLICATIONS_REVIEW))]
 
 
 @router.get(
@@ -35,7 +39,7 @@ EmailClientDep = Annotated[EmailClient, Depends(get_email_client)]
     summary="The review queue, oldest first. Defaults to pending applications",
 )
 async def list_applications(
-    _: CurrentAdmin,
+    _: QueueViewer,
     service: ReviewServiceDep,
     pagination: Pagination,
     status: ApplicationStatus | None = ApplicationStatus.PENDING,
@@ -56,7 +60,7 @@ async def list_applications(
     summary="One application, by id or APP- code",
 )
 async def get_application(
-    ref: str, _: CurrentAdmin, service: ReviewServiceDep
+    ref: str, _: QueueViewer, service: ReviewServiceDep
 ) -> CustomResponse[ApplicationOut]:
     return CustomResponse(message="OK", data=ApplicationOut.model_validate(await service.get(ref)))
 
@@ -69,7 +73,7 @@ async def get_application(
 async def approve(
     ref: str,
     body: ApproveIn,
-    admin: CurrentFullAdmin,
+    admin: Reviewer,
     service: ReviewServiceDep,
     background: BackgroundTasks,
     email_client: EmailClientDep,
@@ -96,7 +100,7 @@ async def approve(
 async def reject(
     ref: str,
     body: RejectIn,
-    admin: CurrentFullAdmin,
+    admin: Reviewer,
     service: ReviewServiceDep,
     background: BackgroundTasks,
     email_client: EmailClientDep,

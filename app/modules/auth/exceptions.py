@@ -54,9 +54,9 @@ class EmailUnchangedException(UnprocessableException):
     message = "This is already your login email."
 
 
-class AdminRoleRequiredException(ForbiddenException):
-    error_code = "auth.admin_role_required"
-    message = "Only admins can do this. Reviewers can view but not change it."
+class AdminPermissionRequiredException(ForbiddenException):
+    error_code = "auth.permission_required"
+    message = "Your role does not allow this. Ask an Owner to change your role."
 
 
 class PasswordInvalidException(UnprocessableException):

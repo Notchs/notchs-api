@@ -12,14 +12,15 @@ import argparse
 import asyncio
 import sys
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.clients.email import EmailClient
 from app.core.logging import setup_logging
 from app.core.redis import redis_client
 from app.db.seed import seed
 from app.db.session import AsyncSessionLocal, engine
-from app.modules.admin_users.models import AdminRole, AdminUser
+from app.modules.admin_users.models import OWNER_ROLE_NAME, AdminRole, AdminUser
+from app.modules.audit import service as audit
 from app.modules.auth.admin_auth import AdminAuthService
 from app.modules.auth.emails import check_email
 
@@ -30,18 +31,32 @@ async def _send_invite(admin: AdminUser, auth: AdminAuthService) -> str:
     return message.text
 
 
-async def create_admin(email: str, name: str, role: AdminRole) -> int:
+async def create_admin(email: str, name: str, role_name: str) -> int:
     email = check_email(email)
     async with AsyncSessionLocal() as session:
         if await session.scalar(select(AdminUser).where(AdminUser.email == email)):
             print(f"An admin with {email} already exists. Use admin-link for a new link.")
             return 1
-        admin = AdminUser(email=email, name=name.strip(), role=role)
+        role = await session.scalar(
+            select(AdminRole).where(func.lower(AdminRole.name) == role_name.strip().lower())
+        )
+        if role is None:
+            names = ", ".join((await session.scalars(select(AdminRole.name))).all())
+            print(f"No role called {role_name!r}. Roles: {names}.")
+            return 1
+        admin = AdminUser(email=email, name=name.strip(), role_id=role.id)
         session.add(admin)
         await session.flush()
+        await audit.record(
+            session,
+            audit.SYSTEM,
+            "admin.created",
+            admin,
+            after={"email": email, "role": role.name, "role_id": role.id},
+        )
         text = await _send_invite(admin, AdminAuthService(session, redis_client))
         await session.commit()
-    print(f"Created {role.value} {admin.admin_user_code} <{email}>.\n\n{text}")
+    print(f"Created {role.name} {admin.admin_user_code} <{email}>.\n\n{text}")
     return 0
 
 
@@ -52,6 +67,7 @@ async def admin_link(email: str) -> int:
         if admin is None:
             print(f"No admin with {email}. Use create-admin.")
             return 1
+        await audit.record(session, audit.SYSTEM, "admin.set_password_link_created", admin)
         text = await _send_invite(admin, AdminAuthService(session, redis_client))
         await session.commit()
     print(f"New set-password link for {email} (older links stop working).\n\n{text}")
@@ -76,7 +92,9 @@ def main(argv: list[str] | None = None) -> int:
     create.add_argument("--email", required=True)
     create.add_argument("--name", required=True)
     create.add_argument(
-        "--role", choices=[r.value for r in AdminRole], default=AdminRole.ADMIN.value
+        "--role",
+        default=OWNER_ROLE_NAME,
+        help=f"Role name, any case (default {OWNER_ROLE_NAME}). Roles are made in the panel.",
     )
     link = commands.add_parser("admin-link", help="Send an existing admin a new set-password link")
     link.add_argument("--email", required=True)
@@ -88,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     async def run() -> int:
         try:
             if args.command == "create-admin":
-                return await create_admin(args.email, args.name, AdminRole(args.role))
+                return await create_admin(args.email, args.name, args.role)
             if args.command == "admin-link":
                 return await admin_link(args.email)
             return await run_seed()

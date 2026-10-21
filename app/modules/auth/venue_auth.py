@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.email import EmailMessage
 from app.core.config import settings
+from app.modules.audit import service as audit
 from app.modules.auth import messages
 from app.modules.auth.emails import is_disposable, normalize_email
 from app.modules.auth.enums import OtpPurpose, SubjectType
@@ -120,7 +121,9 @@ class VenueAuthService:
         if is_disposable(new_email):
             raise EmailNotAllowedException()
         if await self._email_taken(new_email):
+            await self._record_change_request(member, new_email, "email_taken")
             return None
+        await self._record_change_request(member, new_email, "code_sent")
         code = await self.codes.issue(OtpPurpose.EMAIL_CHANGE, new_email, ip=ip or "unknown")
         await self.redis.set(_pending_key(member), new_email, ex=PENDING_EMAIL_TTL_SECONDS)
         return messages.email_code_email(to=new_email, code=code, purpose=EMAIL_CHANGE_CODE_PURPOSE)
@@ -143,7 +146,26 @@ class VenueAuthService:
         except IntegrityError as exc:
             raise EmailTakenException() from exc
         await self.redis.delete(_pending_key(member))
+        await audit.record(
+            self.session,
+            audit.Actor.venue_member(member),
+            "auth.email_changed",
+            member,
+            before={"email": old_email},
+            after={"email": new_email},
+        )
         return messages.email_changed_email(to=old_email, name=member.name, new_email=new_email)
+
+    async def _record_change_request(
+        self, member: VenueMember, new_email: str, result: str
+    ) -> None:
+        await audit.record(
+            self.session,
+            audit.Actor.venue_member(member),
+            "auth.email_change_requested",
+            member,
+            after={"email": new_email, "result": result},
+        )
 
     async def welcome_email(self, member: VenueMember, venue: Venue) -> EmailMessage:
         """Set-password link for a newly approved venue."""

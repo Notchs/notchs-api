@@ -3,8 +3,8 @@
 `POST /dev/simulate-inbound` sends a text, or a tap on one of the bot's buttons, through the
 same path as a real message (parsed, stored, handled by the bot) and returns the bot's replies,
 login links included. Nothing goes
-to Meta, whatever WHATSAPP_DRY_RUN says. Admins (role `admin`) only, because a reply can hold
-a working login link for the customer with that number.
+to Meta, whatever WHATSAPP_DRY_RUN says. Needs the `whatsapp.simulate` permission, because a reply
+can hold a working login link for the customer with that number.
 """
 
 import uuid
@@ -20,7 +20,10 @@ from app.common.phone import masked_phone
 from app.common.schemas import CustomResponse
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.modules.auth.dependencies import CurrentFullAdmin
+from app.modules.admin_users.models import AdminUser
+from app.modules.admin_users.permissions import Permission
+from app.modules.audit import service as audit
+from app.modules.auth.dependencies import require_permission
 from app.modules.whatsapp.bot import WhatsAppBot
 from app.modules.whatsapp.models import WhatsAppMessage
 from app.modules.whatsapp.processor import (
@@ -48,6 +51,7 @@ router = APIRouter(
 )
 
 ProcessorDep = Annotated[InboundProcessor, Depends(get_inbound_processor)]
+Simulator = Annotated[AdminUser, Depends(require_permission(Permission.WHATSAPP_SIMULATE))]
 
 
 class CapturingClient:
@@ -120,15 +124,22 @@ def meta_payload(phone_e164: str, text: str | None, button: str | None = None) -
 )
 async def simulate_inbound(
     body: SimulateInboundIn,
-    admin: CurrentFullAdmin,
+    admin: Simulator,
     session: DBSession,
     processor: ProcessorDep,
 ) -> CustomResponse[SimulatedInboundOut]:
     stored = await WhatsAppWebhookService(session).store(
         parse_webhook(meta_payload(body.phone, body.text, body.button))
     )
-    await session.commit()
     (message_id,) = stored.new_message_ids
+    await audit.record(
+        session,
+        audit.Actor.admin(admin),
+        "whatsapp.simulated",
+        audit.Entity("whatsapp_messages", message_id),
+        after={"kind": "button" if body.button is not None else "text"},
+    )
+    await session.commit()
 
     capture = CapturingClient()
     bot = WhatsAppBot(processor.redis, capture)  # type: ignore[arg-type]

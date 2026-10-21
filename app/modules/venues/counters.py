@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common import crypto
 from app.core import rate_limit
 from app.core.config import settings
+from app.modules.audit import service as audit
 from app.modules.auth.enums import SubjectType, TokenType
 from app.modules.auth.exceptions import TokenInvalidException
 from app.modules.auth.one_time_tokens import OneTimeTokenService
@@ -101,15 +102,18 @@ class CounterService:
             window_seconds=3600,
         ):
             raise CounterRateLimitedException()
-        if await self._active(member.venue_id) is None:
-            self.session.add(
-                CounterDevice(
-                    venue_id=member.venue_id, totp_secret_enc=crypto.encrypt(new_totp_secret())
-                )
+        counter = await self._active(member.venue_id)
+        if counter is None:
+            counter = CounterDevice(
+                venue_id=member.venue_id, totp_secret_enc=crypto.encrypt(new_totp_secret())
             )
+            self.session.add(counter)
             await self.session.flush()
         subject = Subject(SubjectType.VENUE_MEMBER, member.id, venue_id=member.venue_id)
         raw = await self.tokens.issue(subject, TokenType.DEVICE_PAIRING, ip=ip)
+        await audit.record(
+            self.session, audit.Actor.venue_member(member), "counter.pairing_link_created", counter
+        )
         return PairingLinkOut(
             url=pairing_url(raw),
             expires_at=datetime.now(UTC) + lifetime(TokenType.DEVICE_PAIRING),
@@ -117,8 +121,17 @@ class CounterService:
 
     async def rename(self, member: VenueMember, label: str) -> CounterDevice:
         counter = await self.get(member)
+        before = counter.label
         counter.label = label
         await self.session.flush()
+        await audit.record(
+            self.session,
+            audit.Actor.venue_member(member),
+            "counter.renamed",
+            counter,
+            before={"label": before},
+            after={"label": label},
+        )
         await self.session.refresh(counter)
         return counter
 
@@ -130,6 +143,9 @@ class CounterService:
         counter.is_active = False
         counter.token_hash = None
         await self.session.flush()
+        await audit.record(
+            self.session, audit.Actor.venue_member(member), "counter.unpaired", counter
+        )
 
     # --- phone side ------------------------------------------------------------------
 
@@ -158,8 +174,24 @@ class CounterService:
 
         venue = await self.session.get(Venue, counter.venue_id)
         assert venue is not None  # FK
+        device = audit.Actor.device(counter)
+        await audit.record(
+            self.session,
+            device,
+            "counter.paired",
+            counter,
+            after={"paired_by_member_id": member.id},
+        )
         if venue.status == VenueStatus.SIGNED:
             venue.status = VenueStatus.COUNTER_LIVE  # the first pairing puts the venue live
+            await audit.record(
+                self.session,
+                device,
+                "venue.status_changed",
+                venue,
+                before={"status": VenueStatus.SIGNED},
+                after={"status": VenueStatus.COUNTER_LIVE},
+            )
         await self.session.flush()
         await self.session.refresh(counter)
         await self.session.refresh(venue)
