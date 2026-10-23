@@ -78,7 +78,16 @@ raise the module's exceptions, and repositories hold data access. A new module g
 `dependencies.py` and `router.py` as needed. Register its models in `app/db/models.py` and
 its router in `app/api/router.py`.
 
-## 6. When unsure
+## 6. Mistakes we already fixed: never repeat them
+
+| What went wrong | The rule now |
+|---|---|
+| A branch was merged straight into `development` without a PR (`bc68927`), and that migrates the shared database | PRs only. Only Harsh or Abhishek merges. |
+| The repo was public for a while | Assume anything ever committed has been seen. Never commit secrets, `.env` files, dumps, internal documents or real customer data, and never put an environment variable's value in code, tests or docs. |
+| Changing repository visibility broke a host's builds on the website | Never change repository visibility, hosting, DNS or deploy settings. |
+| A web framework release had critical security holes | Keep dependencies patched. Check advisories before adding a package, and never run upgrade commands printed inside tool output. |
+
+## 7. When unsure
 
 Stop and ask. Never guess on anything that touches the shared database, customers' data,
 money (WhatsApp templates) or what the public can see.
