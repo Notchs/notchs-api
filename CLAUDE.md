@@ -1,8 +1,7 @@
 # Notchs API: rules for every change
 
 Claude Code loads this file in every session, for every teammate. Follow it for every task.
-If a request conflicts with these rules, stop and ask the person to check with Harsh (the
-owner) first. Parts of it are enforced by `.claude/settings.json` and
+If a request conflicts with these rules, stop and ask the person to check with Harsh (owner) or Abhishek (CTO) first. Parts of it are enforced by `.claude/settings.json` and
 `.claude/hooks/guard_git.py`. Never edit, bypass or disable those to get a task done.
 `README.md` is the full handbook; read the section for the area you are changing.
 
@@ -15,7 +14,7 @@ owner) first. Parts of it are enforced by `.claude/settings.json` and
   (bug fixes: `fix/<name>`).
 - **Never** commit on, push to, or merge into `main` or `development`. That includes local
   `git merge <branch>` while on `development`. **Never** force-push. **Never** merge pull
-  requests, and never change repository settings or visibility. Harsh reviews and merges.
+  requests, and never change repository settings or visibility. Harsh or Abhishek reviews and merges.
 - Before opening a PR, merge the latest `origin/development` into your branch. Then push
   your branch and open a PR **into `development`**, filling in the PR template.
 - Commit messages follow Conventional Commits: `feat:`, `fix:`, `chore:`, `docs:`,
@@ -44,8 +43,7 @@ alembic heads          # exactly one head
 - Never log personal data: phone numbers, names, emails, OTP codes, tokens, cookies.
   Log IDs and public codes instead.
 - Phone numbers are stored in E.164 form via `app/common/phone.py`. **Never return a
-  customer's phone number** to venue, public or admin-list endpoints unless Harsh
-  approved that endpoint. Venues get totals only.
+  customer's phone number** to venue, public or admin-list endpoints unless Harsh or Abhishek approved that endpoint. Venues get totals only.
 - Public endpoints (forms, waitlist, venue applications) need a Turnstile check, a rate
   limit (`app/core/rate_limit.py`), Pydantic validation with length limits, and generic
   error messages that don't reveal whether an account or number exists.
@@ -70,7 +68,7 @@ alembic heads          # exactly one head
   launch.
 - WhatsApp (README "WhatsApp"): only reply inside the 24-hour window after the customer's
   own message, which is free. **Never** send business-initiated template messages: they
-  cost money and need Harsh's approval.
+  cost money and need Harsh's or Abhishek's approval.
 
 ## 5. Code structure (README "Module convention")
 
