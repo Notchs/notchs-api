@@ -26,7 +26,9 @@ from app.modules.auth.customer_auth import LINK_WINDOW_SECONDS, CustomerAuthServ
 from app.modules.auth.enums import TokenType
 from app.modules.auth.exceptions import AuthRateLimitedException, TokenInvalidException
 from app.modules.auth.tokens import lifetime
+from app.modules.users.handles import clean_name, free_handle
 from app.modules.users.models import User, UserStatus
+from app.modules.users.repository import UserRepository
 from app.modules.whatsapp.models import MessageType, WhatsAppMessage
 from app.modules.whatsapp.payloads import ReplyButton
 from app.modules.whatsapp.sender import WhatsAppSender
@@ -72,16 +74,27 @@ def is_login(message: WhatsAppMessage) -> bool:
     )
 
 
-async def find_or_create_customer(session: AsyncSession, phone_e164: str) -> User:
-    """The customer with this phone number, created if new. Two first messages arriving at
-    once still make one customer (the phone number is unique)."""
+async def find_or_create_customer(
+    session: AsyncSession, phone_e164: str, profile_name: str | None = None
+) -> User:
+    """The customer with this phone number, created if new with their WhatsApp profile name and
+    a handle made from it (riya.m4821). Two first messages arriving at once still make one
+    customer (the phone number is unique). A customer without a name gets one from a later
+    message; a name already set (perhaps changed on the website) is never overwritten."""
+    name = clean_name(profile_name)
     await session.execute(
         insert(User)
-        .values(phone_e164=phone_e164)
+        .values(
+            phone_e164=phone_e164,
+            name=name,
+            handle=await free_handle(name, taken=UserRepository(session).handle_exists),
+        )
         .on_conflict_do_nothing(index_elements=[User.phone_e164])
     )
     user = await session.scalar(select(User).where(User.phone_e164 == phone_e164))
     assert user is not None
+    if user.name is None and name is not None:
+        user.name = name
     return user
 
 
@@ -91,7 +104,9 @@ class WhatsAppBot:
         self.client = client
 
     async def __call__(self, session: AsyncSession, message: WhatsAppMessage) -> None:
-        user = await find_or_create_customer(session, message.phone_e164)
+        user = await find_or_create_customer(
+            session, message.phone_e164, (message.payload or {}).get("profile_name")
+        )
         message.user_id = user.id
         if user.status != UserStatus.ACTIVE or user.deleted_at is not None:
             logger.info(
