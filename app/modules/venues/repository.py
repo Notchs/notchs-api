@@ -63,6 +63,11 @@ class VenueRepository(BaseRepository[Venue]):
             Venue.city_id == city_id, Venue.slug == slug, exclude_id=exclude_id
         )
 
+    async def scan_code_exists(
+        self, scan_code: str, *, exclude_id: uuid.UUID | None = None
+    ) -> bool:
+        return await self._exists(Venue.scan_code == scan_code, exclude_id=exclude_id)
+
     async def founding_venue_no_exists(
         self, number: int, *, exclude_id: uuid.UUID | None = None
     ) -> bool:

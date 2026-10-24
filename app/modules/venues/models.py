@@ -28,6 +28,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Entity, in_values, public_code_column
 from app.modules.locations.models import SLUG_REGEX
+from app.modules.venues.scan_codes import MAX_LENGTH as SCAN_CODE_MAX_LENGTH
+from app.modules.venues.scan_codes import SCAN_CODE_REGEX, random_scan_code
 
 DEFAULT_GEOFENCE_RADIUS_M = 150
 DEFAULT_FIRST_NOTCH_SPOTS = 50
@@ -56,6 +58,7 @@ class Venue(Entity):
     __table_args__ = (
         UniqueConstraint("city_id", "slug", name="uq_venues_city_id_slug"),
         CheckConstraint(f"slug ~ '{SLUG_REGEX}'", name="slug_format"),
+        CheckConstraint(f"scan_code ~ '{SCAN_CODE_REGEX}'", name="scan_code_format"),
         # Stored as text + CHECK, not a Postgres enum: adding a value is a plain migration.
         CheckConstraint(in_values("category", VenueCategory), name="category_valid"),
         CheckConstraint(in_values("status", VenueStatus), name="status_valid"),
@@ -73,6 +76,12 @@ class Venue(Entity):
 
     # Public id shown to people (README, "IDs and public codes"). Not in the spec sheet.
     venue_code: Mapped[str] = public_code_column("VEN")
+    # What customers send to get notched: "Hey Notchs!, get me notched. KAHWA-482913".
+    # Made from the name when the venue is created (scan_codes.py); unique; admins may change it.
+    # Not in the spec sheet (it had `code`, e.g. KAAFI-SBR; a hyphen now separates the live code).
+    scan_code: Mapped[str] = mapped_column(
+        String(SCAN_CODE_MAX_LENGTH), unique=True, default=random_scan_code
+    )
 
     city_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("cities.id", ondelete="RESTRICT"), index=True

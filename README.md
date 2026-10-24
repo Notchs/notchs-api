@@ -172,6 +172,13 @@ Rules for the shared DB:
 
 Add a row here when a new table gets a code. A prefix is never reused or changed.
 
+**Venue scan codes** are different: `venues.scan_code` (e.g. `KAHWA`) is what customers send to
+get notched. It is made from the venue's name when the venue is created (`KAHWA`, then `KAHWA2`...),
+3–10 capital letters and digits starting with a letter, unique, and an admin may change it. The
+counter phone's QR opens WhatsApp with **"Hey Notchs!, get me notched. KAHWA-482913"**, where
+`482913` is the live code it shows. `GET /api/v1/display/config` returns `scan.link_template`: replace
+`{code}` with the live code and draw it as a QR.
+
 ## Redis
 
 Redis holds rate limits, one-time codes, leaderboards and the job queue. Unlike Postgres it is
@@ -206,6 +213,7 @@ production refuse to start until the real values are set.
 | `WHATSAPP_API_VERSION` | Meta Graph API version, e.g. `v23.0`. |
 | `WHATSAPP_APP_SECRET` | Meta app secret (App settings → Basic). Checks the signature on every webhook call; without it, all are refused. Required in production. |
 | `WHATSAPP_VERIFY_TOKEN` | Any random string; also entered in Meta's webhook form. Required in production. |
+| `WHATSAPP_PUBLIC_NUMBER` | The number customers message, digits with the country code (e.g. `15556755530`, the test number). Counter phones put it in their scan QR. Required in production. |
 | `WHATSAPP_SWEEP_INTERVAL_SECONDS` | How often the API retries incoming messages left unhandled (default `60`; `0` turns it off). |
 
 ### Sessions (for the frontends)

@@ -30,9 +30,11 @@ from app.modules.auth.exceptions import TokenInvalidException
 from app.modules.auth.one_time_tokens import OneTimeTokenService
 from app.modules.auth.sessions import Subject, active_venue_member
 from app.modules.auth.tokens import hash_token, lifetime, new_token
+from app.modules.venues import scan_codes
 from app.modules.venues.counter_schemas import (
     CounterOut,
     DisplayConfigOut,
+    DisplayScanOut,
     DisplayVenueOut,
     PairingLinkOut,
     TotpSettingsOut,
@@ -192,7 +194,13 @@ class CounterService:
         return DisplayConfigOut(
             counter_id=counter.id,
             label=counter.label,
-            venue=DisplayVenueOut(name=venue.name, venue_code=venue.venue_code, slug=venue.slug),
+            venue=DisplayVenueOut(
+                name=venue.name,
+                venue_code=venue.venue_code,
+                slug=venue.slug,
+                scan_code=venue.scan_code,
+            ),
+            scan=_scan_settings(venue),
             totp=TotpSettingsOut(
                 secret=crypto.decrypt(counter.totp_secret_enc),
                 interval_s=counter.code_interval_s,
@@ -204,3 +212,15 @@ class CounterService:
             CounterDevice.venue_id == venue_id, CounterDevice.revoked_at.is_(None)
         )
         return await self.session.scalar(query.with_for_update() if for_update else query)
+
+
+def _scan_settings(venue: Venue) -> DisplayScanOut | None:
+    number = settings.WHATSAPP_PUBLIC_NUMBER
+    if not number:
+        return None
+    return DisplayScanOut(
+        whatsapp_number=number,
+        message=scan_codes.SCAN_MESSAGE,
+        link_template=scan_codes.scan_link_template(number, venue.scan_code),
+        text_example=scan_codes.scan_text(venue.scan_code, "482913"),
+    )

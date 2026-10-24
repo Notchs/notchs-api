@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 
-from pydantic import AfterValidator, Field, StringConstraints, model_validator
+from pydantic import AfterValidator, BeforeValidator, Field, StringConstraints, model_validator
 
 from app.common.schemas import BaseSchema, EntitySchema, PublicCode
 from app.modules.locations.models import SLUG_REGEX
@@ -14,13 +14,21 @@ from app.modules.venues.models import (
     VenueCategory,
     VenueStatus,
 )
+from app.modules.venues.scan_codes import SCAN_CODE_REGEX, normalize_scan_code
 
 Day = Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 ClockTime = Annotated[str, StringConstraints(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")]
 TimeRange = tuple[ClockTime, ClockTime]
 MAX_RANGES_PER_DAY = 4
 # Columns that are NOT NULL: a partial update may leave them out but not send null.
-NOT_NULL_ON_UPDATE = ("name", "slug", "category", "geofence_radius_m", "first_notch_spots")
+NOT_NULL_ON_UPDATE = (
+    "name",
+    "slug",
+    "scan_code",
+    "category",
+    "geofence_radius_m",
+    "first_notch_spots",
+)
 
 
 def _check_opening_hours(value: dict[Day, list[TimeRange]]) -> dict[Day, list[TimeRange]]:
@@ -38,6 +46,12 @@ def _check_opening_hours(value: dict[Day, list[TimeRange]]) -> dict[Day, list[Ti
 OpeningHours = Annotated[dict[Day, list[TimeRange]], AfterValidator(_check_opening_hours)]
 
 Slug = Annotated[str, StringConstraints(pattern=SLUG_REGEX, max_length=120)]
+# KAHWA, KAAFI2: 3-10 capital letters and digits, starting with a letter. Any case accepted.
+ScanCode = Annotated[
+    str,
+    BeforeValidator(lambda v: normalize_scan_code(v) if isinstance(v, str) else v),
+    StringConstraints(pattern=SCAN_CODE_REGEX),
+]
 Latitude = Annotated[Decimal, Field(ge=-90, le=90, max_digits=9, decimal_places=6)]
 Longitude = Annotated[Decimal, Field(ge=-180, le=180, max_digits=9, decimal_places=6)]
 
@@ -48,6 +62,7 @@ class VenueCreate(BaseSchema):
     name: str = Field(min_length=1, max_length=120)
     # Generated from the name when left out.
     slug: Slug | None = None
+    scan_code: ScanCode | None = None
     category: VenueCategory
     address: str | None = None
     landmark: str | None = Field(None, max_length=120)
@@ -75,6 +90,7 @@ class VenueUpdate(BaseSchema):
     area_id: uuid.UUID | None = None
     name: str | None = Field(None, min_length=1, max_length=120)
     slug: Slug | None = None
+    scan_code: ScanCode | None = None
     category: VenueCategory | None = None
     address: str | None = None
     landmark: str | None = Field(None, max_length=120)
@@ -108,6 +124,7 @@ class VenueOut(EntitySchema):
     """Full venue, for admins and the venue's own dashboard."""
 
     venue_code: PublicCode
+    scan_code: str
     city_id: uuid.UUID
     area_id: uuid.UUID | None
     name: str

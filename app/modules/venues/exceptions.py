@@ -17,6 +17,11 @@ class VenueSlugTakenException(ConflictException):
     message = "Another venue in this city already uses this slug."
 
 
+class VenueScanCodeTakenException(ConflictException):
+    error_code = "venues.scan_code_taken"
+    message = "Another venue already uses this scan code."
+
+
 class FoundingVenueNoTakenException(ConflictException):
     error_code = "venues.founding_venue_no_taken"
     message = "This founding venue number is already assigned."

@@ -108,6 +108,9 @@ class Settings(BaseSettings):
     # token is any random string, entered in Meta's "Configure Webhooks" form too.
     WHATSAPP_APP_SECRET: SecretStr | None = None
     WHATSAPP_VERIFY_TOKEN: SecretStr | None = None
+    # The number customers message, digits only with the country code (e.g. 15556755530 for the
+    # test number). Counter phones put it in their scan QR.
+    WHATSAPP_PUBLIC_NUMBER: str | None = None
     # How often the API looks for incoming messages left unhandled (e.g. after a restart).
     # 0 turns the sweep off.
     WHATSAPP_SWEEP_INTERVAL_SECONDS: float = 60
@@ -168,6 +171,9 @@ class Settings(BaseSettings):
             raise ValueError(
                 "WHATSAPP_APP_SECRET and WHATSAPP_VERIFY_TOKEN are required in production"
             )
+        if self.is_production and not self.WHATSAPP_PUBLIC_NUMBER:
+            # Without it the counter phones cannot show a scan QR.
+            raise ValueError("WHATSAPP_PUBLIC_NUMBER is required in production")
         if self.is_production and self.EMAIL_DRY_RUN:
             raise ValueError("EMAIL_DRY_RUN must be false in production")
         for name in ("VENUE_APP_URL", "ADMIN_APP_URL", "CUSTOMER_APP_URL"):
@@ -189,6 +195,10 @@ class Settings(BaseSettings):
                 "WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN are required when "
                 "WHATSAPP_DRY_RUN is false"
             )
+        if self.WHATSAPP_PUBLIC_NUMBER is not None and not re.fullmatch(
+            r"[1-9][0-9]{7,14}", self.WHATSAPP_PUBLIC_NUMBER
+        ):
+            raise ValueError("WHATSAPP_PUBLIC_NUMBER must be digits with the country code")
         if not re.fullmatch(r"v\d+\.\d+", self.WHATSAPP_API_VERSION):
             raise ValueError("WHATSAPP_API_VERSION must look like v23.0")
         if self.WHATSAPP_SWEEP_INTERVAL_SECONDS < 0:
