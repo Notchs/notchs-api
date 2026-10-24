@@ -13,6 +13,6 @@
 - [ ] Real data only: counts, ranks and queue positions come from real rows
 - [ ] No business-initiated WhatsApp template messages (they cost money)
 
-## Notes for Harsh and Abhishek
+## Notes for the reviewer
 
 <!-- Anything that needs a decision. Merging into development migrates the shared DB. -->
