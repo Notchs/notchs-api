@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Bash(gh pr merge *)",
+      "Bash(gh repo edit *)",
+      "Bash(gh repo delete *)",
+      "Bash(gh repo rename *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Read(**/.env)",
+      "Read(**/.env.local)",
+      "Read(**/.env.*.local)",
+      "Read(**/.env.production)",
+      "Read(**/.env.development)"
+    ],
+    "ask": [
+      "Bash(alembic upgrade *)",
+      "Bash(alembic downgrade *)",
+      "Bash(alembic stamp *)",
+      "Edit(**/app/core/config.py)",
+      "Edit(**/app/core/rate_limit.py)",
+      "Edit(**/app/clients/turnstile.py)",
+      "Edit(**/alembic/env.py)",
+      "Edit(**/CLAUDE.md)",
+      "Edit(**/.claude/**)",
+      "Edit(**/.github/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_git.py\"",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  }
+}
