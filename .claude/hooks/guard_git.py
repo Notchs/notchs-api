@@ -21,7 +21,7 @@ ALLOWED_FLAGS = {"--abort", "--continue", "--quit", "--skip"}
 FORCE = re.compile(r"^(-f|--force|--force-with-lease|--force-if-includes)")
 HOW = (
     "Work on your own branch (feature/<name>-module or fix/<name>) and open a PR into "
-    "development; Harsh or Abhishek reviews and merges."
+    "development; a teammate other than the author reviews it before merging."
 )
 
 
