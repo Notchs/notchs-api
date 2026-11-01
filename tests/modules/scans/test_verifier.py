@@ -72,3 +72,42 @@ def test_secrets_from_pairing_and_longer_intervals() -> None:
 
     assert verifier.verify(secret, code, interval=60, now=now + 100) == now // 60
     assert verifier.verify(secret.lower(), code, interval=60, now=now) == now // 60
+
+
+NOW = 1_800_000_000
+INTERVAL = 30
+
+
+def _code(slots_ago: int) -> str:
+    return verifier.code_at(RFC_SECRET, verifier.slot_of(NOW, INTERVAL) - slots_ago)
+
+
+def test_a_code_just_too_old_is_expired() -> None:
+    code = _code(verifier.SLOTS_BEFORE + 1)
+
+    assert verifier.verify(RFC_SECRET, code, interval=INTERVAL, now=NOW) is None
+    assert verifier.is_expired(RFC_SECRET, code, interval=INTERVAL, now=NOW)
+
+
+def test_a_code_from_an_hour_ago_is_expired_and_older_is_not() -> None:
+    last = verifier.EXPIRED_LOOKBACK_SECONDS // INTERVAL
+
+    assert verifier.is_expired(RFC_SECRET, _code(last), interval=INTERVAL, now=NOW)
+    assert not verifier.is_expired(RFC_SECRET, _code(last + 1), interval=INTERVAL, now=NOW)
+
+
+def test_a_code_still_accepted_is_not_expired() -> None:
+    code = _code(verifier.SLOTS_BEFORE)
+
+    assert not verifier.is_expired(RFC_SECRET, code, interval=INTERVAL, now=NOW)
+
+
+@pytest.mark.parametrize("code", ["", "12345", "1234567", "abcdef"])
+def test_malformed_codes_are_not_expired(code: str) -> None:
+    assert not verifier.is_expired(RFC_SECRET, code, interval=INTERVAL, now=NOW)
+
+
+def test_another_venues_old_code_is_not_expired() -> None:
+    code = verifier.code_at("JBSWY3DPEHPK3PXP", verifier.slot_of(NOW, INTERVAL) - 5)
+
+    assert not verifier.is_expired(RFC_SECRET, code, interval=INTERVAL, now=NOW)

@@ -20,6 +20,8 @@ import time
 DIGITS = 6
 SLOTS_BEFORE = 2
 SLOTS_AFTER = 1
+# How far back a refused code is still recognised as an old real one ("expired", not "wrong").
+EXPIRED_LOOKBACK_SECONDS = 60 * 60
 
 
 def _key(secret_b32: str) -> bytes:
@@ -51,3 +53,17 @@ def verify(secret_b32: str, code: str, *, interval: int, now: float | None = Non
         if hmac.compare_digest(code_at(secret_b32, slot), code) and matched is None:
             matched = slot
     return matched
+
+
+def is_expired(secret_b32: str, code: str, *, interval: int, now: float | None = None) -> bool:
+    """True if `code` is a real code from the last EXPIRED_LOOKBACK_SECONDS that `verify` no longer
+    accepts, so the customer can be told to scan again rather than that the code is wrong."""
+    if len(code) != DIGITS or not code.isdigit():
+        return False
+    current = slot_of(time.time() if now is None else now, interval)
+    newest = current - SLOTS_BEFORE - 1
+    oldest = max(current - EXPIRED_LOOKBACK_SECONDS // interval, 0)
+    found = False
+    for slot in range(newest, oldest - 1, -1):
+        found |= hmac.compare_digest(code_at(secret_b32, slot), code)
+    return found
