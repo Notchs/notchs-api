@@ -21,7 +21,7 @@ from app.modules.jobs.models import JobName
 from app.modules.jobs.runner import JobFunction, Progress, SessionFactory
 from app.modules.locations.models import City
 from app.modules.locations.time import Period, month_from_string, month_label
-from app.modules.notches.models import COUNTED_STATUSES, Notch
+from app.modules.scans.models import COUNTED_STATUSES, Visit
 from app.modules.users.models import User, UserStatus
 from app.modules.venues.models import Venue, VenueMember, VenueMemberRole
 
@@ -30,13 +30,13 @@ async def notch_cards(session_factory: SessionFactory, period: str, progress: Pr
     month = month_from_string(period)
     async with session_factory() as session:
         rows = await session.execute(
-            select(Notch.user_id, Notch.city_id, func.count())
+            select(Visit.user_id, Visit.city_id, func.count())
             .where(
-                Notch.status.in_(COUNTED_STATUSES),
-                Notch.user_id.is_not(None),
-                Notch.local_date.between(month.start, month.end),
+                Visit.status.in_(COUNTED_STATUSES),
+                Visit.user_id.is_not(None),
+                Visit.visit_date.between(month.start, month.end),
             )
-            .group_by(Notch.user_id, Notch.city_id)
+            .group_by(Visit.user_id, Visit.city_id)
         )
         # A customer who notched in two cities gets the card of the one they notched most in.
         best: dict[uuid.UUID, tuple[uuid.UUID, int]] = {}
@@ -81,12 +81,12 @@ async def venue_cards(session_factory: SessionFactory, period: str, progress: Pr
     async with session_factory() as session:
         venue_ids = list(
             await session.scalars(
-                select(Notch.venue_id)
+                select(Visit.venue_id)
                 .where(
-                    Notch.status.in_(COUNTED_STATUSES),
-                    Notch.local_date.between(month.start, month.end),
+                    Visit.status.in_(COUNTED_STATUSES),
+                    Visit.visit_date.between(month.start, month.end),
                 )
-                .group_by(Notch.venue_id)
+                .group_by(Visit.venue_id)
             )
         )
     progress.total = len(venue_ids)
@@ -130,14 +130,14 @@ async def _venue_card(
             visitors, anonymous, new, notches = (
                 await session.execute(
                     select(
-                        func.count(func.distinct(Notch.user_id)),
-                        func.count().filter(Notch.user_id.is_(None)),
-                        func.count().filter(Notch.user_visit_no == 1),
+                        func.count(func.distinct(Visit.user_id)),
+                        func.count().filter(Visit.user_id.is_(None)),
+                        func.count().filter(Visit.visit_no_at_venue == 1),
                         func.count(),
                     ).where(
-                        Notch.venue_id == venue_id,
-                        Notch.status.in_(COUNTED_STATUSES),
-                        Notch.local_date.between(month.start, month.end),
+                        Visit.venue_id == venue_id,
+                        Visit.status.in_(COUNTED_STATUSES),
+                        Visit.visit_date.between(month.start, month.end),
                     )
                 )
             ).one()

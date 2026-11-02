@@ -168,11 +168,7 @@ async def test_counter_display_gets_the_qr_message_and_today_count(
     api.cookies.set(DEVICE_COOKIE, token, path="/api/v1/display")
 
     config = (await api.get("/display/config")).json()["data"]
-    assert (
-        config["qr"]["message_template"]
-        == f"Notch me at Kahwa House · {{code}} [{venue.venue_code}]"
-    )
-    assert config["qr"]["whatsapp_number"] == "919099012345"
+    assert config["venue"]["scan_code"] == venue.scan_code
     assert config["notched_today"] == 2
     assert config["venue"]["area"] == "Navrangpura"
 

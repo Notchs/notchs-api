@@ -8,7 +8,8 @@ from typing import Literal, Self
 from pydantic import Field, model_validator
 
 from app.common.schemas import BaseSchema, PublicCode
-from app.modules.notches.models import Badge, NotchStatus
+from app.modules.notches.models import Badge
+from app.modules.scans.models import VisitStatus
 from app.modules.users.models import UserTheme
 from app.modules.venues.schemas import VenueBriefOut, VenuePageOut
 
@@ -109,7 +110,7 @@ class NotchOut(BaseSchema):
     local_date: date
     time: str  # "18:12"
     notch_no: int  # "Notch #0145"
-    status: NotchStatus
+    status: VisitStatus
     # Counted, but a reviewer is checking it.
     under_review: bool
 

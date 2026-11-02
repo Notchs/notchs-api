@@ -14,7 +14,7 @@ from app.modules.audit.models import AuditLog
 from app.modules.jobs.models import JobName, RunTrigger
 from app.modules.jobs.runner import SessionFactory, claim
 from app.modules.notches.checkin import CheckInService
-from app.modules.notches.codes import ScanMessage
+from app.modules.scans.parser import Scan
 from app.modules.users.models import User, UserStatus
 from tests import factories as f
 
@@ -25,10 +25,17 @@ async def _shared_code(db: AsyncSession, redis: FakeAsyncRedis):
     venue = await f.venue(db, city, name="Kahwa House")
     await f.counter(db, venue)
     now = datetime.now(UTC)
-    scan = ScanMessage(venue.venue_code, f.code_at(now))
+    scan = Scan(venue.scan_code, f.code_at(now))
     service = CheckInService(db, redis)
-    first = await service.scan(await f.user(db), scan, scanned_at=now)
-    second = await service.scan(await f.user(db), scan, scanned_at=now + timedelta(seconds=3))
+    first = await service.scan(
+        await f.user(db), scan, scanned_at=now, whatsapp_message_id=await f.message_id(db)
+    )
+    second = await service.scan(
+        await f.user(db),
+        scan,
+        scanned_at=now + timedelta(seconds=3),
+        whatsapp_message_id=await f.message_id(db),
+    )
     await db.flush()
     return venue, first.notch, second.notch
 
@@ -50,7 +57,7 @@ async def test_proof_review_queue(
 
     # Reviewers decide proof review (A / R).
     approved = await api.post(f"/admin/notches/{first.notch_code}/approve", json={})
-    assert approved.json()["data"]["status"] == "verified"
+    assert approved.json()["data"]["status"] == "valid"
     rejected = await api.post(
         f"/admin/notches/{second.notch_code}/reject", json={"note": "Screenshot"}
     )

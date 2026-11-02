@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from app.common.schemas import BaseSchema, PublicCode
-from app.modules.notches.models import NotchStatus
+from app.modules.scans.models import VisitStatus
 from app.modules.users.models import DeletionSource, DeletionStatus, UserStatus
 
 
@@ -21,7 +21,7 @@ class AdminVisitOut(BaseSchema):
     notch_code: PublicCode
     venue_name: str
     scanned_at: datetime
-    status: NotchStatus
+    status: VisitStatus
 
 
 class AdminUserOut(AdminUserRowOut):

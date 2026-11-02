@@ -22,7 +22,7 @@ from app.modules.cards.schemas import (
 )
 from app.modules.locations.models import City
 from app.modules.locations.time import month_label, month_of
-from app.modules.notches.models import COUNTED_STATUSES, Notch
+from app.modules.scans.models import COUNTED_STATUSES, Visit
 from app.modules.users.display import first_name
 from app.modules.users.models import User, UserStatus
 from app.modules.venues.models import Venue, VenueStatus
@@ -171,11 +171,11 @@ class CardService:
         month = month_of(card.period)
         query = (
             select(Venue)
-            .join(Notch, Notch.venue_id == Venue.id)
+            .join(Visit, Visit.venue_id == Venue.id)
             .where(
-                Notch.user_id == card.user_id,
-                Notch.status.in_(COUNTED_STATUSES),
-                Notch.local_date.between(month.start, month.end),
+                Visit.user_id == card.user_id,
+                Visit.status.in_(COUNTED_STATUSES),
+                Visit.visit_date.between(month.start, month.end),
                 Venue.status == VenueStatus.COUNTER_LIVE,
                 Venue.deleted_at.is_(None),
             )
@@ -184,8 +184,8 @@ class CardService:
             .limit(SHARED_PLACES)
         )
         if viewer is not None:
-            mine = select(Notch.venue_id).where(
-                Notch.user_id == viewer.id, Notch.status.in_(COUNTED_STATUSES)
+            mine = select(Visit.venue_id).where(
+                Visit.user_id == viewer.id, Visit.status.in_(COUNTED_STATUSES)
             )
             query = query.where(Venue.id.not_in(mine))
         venues = list(await self.session.scalars(query))

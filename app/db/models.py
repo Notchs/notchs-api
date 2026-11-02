@@ -12,7 +12,8 @@ from app.modules.auth.models import AuthToken
 from app.modules.cards.models import NotchCard, VenueCard
 from app.modules.jobs.models import JobRun
 from app.modules.locations.models import Area, City
-from app.modules.notches.models import FraudSignal, Notch, UserBadge
+from app.modules.notches.models import FraudSignal, UserBadge
+from app.modules.scans.models import PointsEntry, ScanSession, Visit
 from app.modules.users.models import User, UserDeletion
 from app.modules.venue_applications.models import VenueApplication
 from app.modules.venues.models import CounterDevice, Venue, VenueMember
@@ -28,8 +29,9 @@ __all__ = [
     "CounterDevice",
     "FraudSignal",
     "JobRun",
-    "Notch",
     "NotchCard",
+    "PointsEntry",
+    "ScanSession",
     "User",
     "UserBadge",
     "UserDeletion",
@@ -37,5 +39,6 @@ __all__ = [
     "VenueApplication",
     "VenueCard",
     "VenueMember",
+    "Visit",
     "WhatsAppMessage",
 ]

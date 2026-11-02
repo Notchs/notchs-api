@@ -12,7 +12,7 @@ from app.modules.admin_users.models import AdminUser
 from app.modules.audit import service as audit
 from app.modules.locations.models import Area, City
 from app.modules.locations.time import last_days, today
-from app.modules.notches.models import COUNTED_STATUSES, Notch
+from app.modules.scans.models import COUNTED_STATUSES, Visit
 from app.modules.venues.admin_schemas import AdminVenueOut, AdminVenueRowOut
 from app.modules.venues.counters import counter_out
 from app.modules.venues.exceptions import VenueNotFoundException
@@ -149,13 +149,13 @@ class VenueAdminService:
         return dict(
             (
                 await self.session.execute(
-                    select(Notch.venue_id, func.count())
+                    select(Visit.venue_id, func.count())
                     .where(
-                        Notch.venue_id.in_(venue_ids),
-                        Notch.status.in_(COUNTED_STATUSES),
-                        Notch.local_date.between(week.start, week.end),
+                        Visit.venue_id.in_(venue_ids),
+                        Visit.status.in_(COUNTED_STATUSES),
+                        Visit.visit_date.between(week.start, week.end),
                     )
-                    .group_by(Notch.venue_id)
+                    .group_by(Visit.venue_id)
                 )
             ).all()
         )
@@ -174,7 +174,7 @@ class VenueAdminService:
         )
         total = await self.session.scalar(
             select(func.count()).where(
-                Notch.venue_id == venue.id, Notch.status.in_(COUNTED_STATUSES)
+                Visit.venue_id == venue.id, Visit.status.in_(COUNTED_STATUSES)
             )
         )
         return AdminVenueOut(

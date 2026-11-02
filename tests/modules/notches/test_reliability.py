@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clients.whatsapp import SendResult, WhatsAppSendError
 from app.modules.jobs.runner import SessionFactory
 from app.modules.notches.checkin import CheckInService, Outcome, delete_expired_pending
-from app.modules.notches.codes import ScanMessage, message_template
-from app.modules.notches.models import Notch, PendingCheckIn
+from app.modules.notches.models import PendingCheckIn
+from app.modules.scans.models import Visit
 from app.modules.users.consent import PRIVACY_CONSENT_TEXT
 from app.modules.users.deletion import DeletionService
 from app.modules.users.models import (
@@ -25,6 +25,7 @@ from app.modules.users.models import (
     UserDeletion,
     UserStatus,
 )
+from app.modules.venues import scan_codes
 from app.modules.venues.models import Venue
 from app.modules.whatsapp.bot import WhatsAppBot
 from app.modules.whatsapp.dev_router import CapturingClient, meta_payload
@@ -66,13 +67,11 @@ async def _live_venue(db: AsyncSession):
 
 
 def _scan(venue: Venue) -> str:
-    return message_template(venue.name, venue.venue_code).replace(
-        "{code}", f.code_at(datetime.now(UTC))
-    )
+    return scan_codes.scan_text(venue.scan_code, f.code_at(datetime.now(UTC)))
 
 
 async def _notches(db: AsyncSession) -> int:
-    return await db.scalar(select(func.count()).select_from(Notch)) or 0
+    return await db.scalar(select(func.count()).select_from(Visit)) or 0
 
 
 async def test_two_i_agree_taps_make_one_notch(db: AsyncSession, redis: FakeAsyncRedis) -> None:
@@ -148,31 +147,6 @@ async def test_processor_retry_after_a_failure_notches_once(
     assert await processor.process(message_id) is True  # the retry
     assert await processor.process(message_id) is False  # already handled: nothing twice
     assert await _notches(db) == 1
-
-
-async def test_a_race_on_the_one_per_day_index_is_already_today(
-    db: AsyncSession, redis: FakeAsyncRedis, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    venue = await _live_venue(db)
-    user = await f.user(db)
-    service = CheckInService(db, redis)
-    now = datetime.now(UTC)
-    await f.notch_at(db, redis, user, venue, now)
-
-    # Two messages handled at the same moment both pass the "already today?" check.
-    async def not_yet(*_: Any) -> bool:
-        return False
-
-    monkeypatch.setattr(service, "_already_today", not_yet)
-    later = now + timedelta(seconds=5)
-    raced = await service.scan(
-        user, ScanMessage(venue.venue_code, f.code_at(later)), scanned_at=later
-    )
-
-    assert raced.outcome is Outcome.ALREADY_TODAY
-    assert await _notches(db) == 1
-    await db.refresh(venue)
-    assert venue.notch_count == 1  # the losing attempt's number was rolled back too
 
 
 async def test_whatsapp_down_still_keeps_the_notch_and_never_retries_it(

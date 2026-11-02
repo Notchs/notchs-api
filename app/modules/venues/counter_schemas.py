@@ -41,6 +41,21 @@ class DisplayVenueOut(BaseSchema):
     venue_code: PublicCode
     slug: str
     area: str | None = None  # "Navrangpura", under the name on the counter screen
+    scan_code: str
+
+
+class DisplayScanOut(BaseSchema):
+    """What the QR on the counter phone opens: WhatsApp with the message pre-typed.
+
+    Replace `{code}` in `link_template` with the live 6-digit code (same as `totp`) and draw the
+    result as a QR; redraw it whenever the code changes. `text_example` shows the message a
+    customer ends up sending.
+    """
+
+    whatsapp_number: str
+    message: str
+    link_template: str
+    text_example: str
 
 
 class TotpSettingsOut(BaseSchema):
@@ -52,20 +67,13 @@ class TotpSettingsOut(BaseSchema):
     algorithm: Literal["SHA1"] = "SHA1"
 
 
-class DisplayQrOut(BaseSchema):
-    """What the QR opens: wa.me/<whatsapp_number>?text=<message>, where the message is
-    `message_template` with `{code}` replaced by the current code (URL-encode the message)."""
-
-    whatsapp_number: str  # digits only, as wa.me wants them: 919099012345
-    message_template: str  # "Notch me at Kahwa House · {code} [VEN-7K3M9QX2]"
-
-
 class DisplayConfigOut(BaseSchema):
     counter_id: uuid.UUID
     label: str
     venue: DisplayVenueOut
     totp: TotpSettingsOut
-    qr: DisplayQrOut
+    # None until WHATSAPP_PUBLIC_NUMBER is set (the display then can't show a scan QR).
+    scan: DisplayScanOut | None
     # "14 notched here today" (E4), in the city's day.
     notched_today: int
     # Set the code clock from this: codes are made from the phone's time.

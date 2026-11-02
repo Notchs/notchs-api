@@ -5,7 +5,8 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.common.schemas import BaseSchema, PublicCode
-from app.modules.notches.models import NotchStatus, SignalKind, SignalStatus
+from app.modules.notches.models import SignalKind, SignalStatus
+from app.modules.scans.models import VisitStatus
 
 
 class ReviewNotchOut(BaseSchema):
@@ -13,7 +14,7 @@ class ReviewNotchOut(BaseSchema):
 
     id: uuid.UUID
     notch_code: PublicCode
-    status: NotchStatus
+    status: VisitStatus
     venue_id: uuid.UUID
     venue_name: str
     area: str | None
@@ -22,7 +23,6 @@ class ReviewNotchOut(BaseSchema):
     local_date: date
     time: str
     code: str
-    code_offset: int
     notch_no: int
     flags: list[str]
     flag_note: str | None

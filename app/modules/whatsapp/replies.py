@@ -75,6 +75,14 @@ def code_expired() -> Reply:
     return Reply("This *code expired*. Scan the screen at the counter again.")
 
 
+def no_code() -> Reply:
+    return Reply("*No code in that message.* Scan the screen at the counter to get your Notch.")
+
+
+def daily_limit() -> Reply:
+    return Reply("*That's it for today.* You can get Notchs at 4 places a day. Back tomorrow.")
+
+
 def venue_not_live(venue_name: str) -> Reply:
     return Reply(f"*{venue_name}* isn't taking Notchs right now. Try again another day.")
 

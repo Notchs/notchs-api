@@ -24,8 +24,8 @@ from app.modules.cards.models import CardFace, NotchCard
 from app.modules.locations.models import City
 from app.modules.locations.time import Period, local
 from app.modules.notches.badges import REGULAR_VISITS
-from app.modules.notches.models import COUNTED_STATUSES, Notch
 from app.modules.rankings import service as rankings
+from app.modules.scans.models import COUNTED_STATUSES, Visit
 from app.modules.users.models import User
 from app.modules.venues.models import Venue, VenueCategory, VenueStatus
 
@@ -88,23 +88,23 @@ async def month_stats(
 ) -> MonthStats | None:
     rows = (
         await session.execute(
-            select(Notch.venue_id, Venue.name, Notch.category, Notch.scanned_at, Notch.local_date)
-            .join(Venue, Venue.id == Notch.venue_id)
+            select(Visit.venue_id, Venue.name, Visit.category, Visit.visited_at, Visit.visit_date)
+            .join(Venue, Venue.id == Visit.venue_id)
             .where(
-                Notch.user_id == user_id,
-                Notch.status.in_(COUNTED_STATUSES),
-                Notch.local_date.between(period.start, period.end),
+                Visit.user_id == user_id,
+                Visit.status.in_(COUNTED_STATUSES),
+                Visit.visit_date.between(period.start, period.end),
             )
-            .order_by(Notch.scanned_at)
+            .order_by(Visit.visited_at)
         )
     ).all()
     if not rows:
         return None
     visits = Counter(row.venue_id for row in rows)
-    last_visit = {row.venue_id: row.scanned_at for row in rows}
+    last_visit = {row.venue_id: row.visited_at for row in rows}
     top_id = max(visits, key=lambda v: (visits[v], last_visit[v]))
-    top_dates = [row.local_date for row in rows if row.venue_id == top_id]
-    minutes = [(t := local(row.scanned_at, tz)).hour * 60 + t.minute for row in rows]
+    top_dates = [row.visit_date for row in rows if row.venue_id == top_id]
+    minutes = [(t := local(row.visited_at, tz)).hour * 60 + t.minute for row in rows]
     avg = average_minute(minutes)
     favourite = Counter(row.category for row in rows).most_common(1)[0][0]
     return MonthStats(
@@ -121,8 +121,8 @@ async def month_stats(
 
 async def unnotched_count(session: AsyncSession, user_id: uuid.UUID, city_id: uuid.UUID) -> int:
     """Live places in the city the customer has never notched."""
-    notched = select(Notch.venue_id).where(
-        Notch.user_id == user_id, Notch.status.in_(COUNTED_STATUSES)
+    notched = select(Visit.venue_id).where(
+        Visit.user_id == user_id, Visit.status.in_(COUNTED_STATUSES)
     )
     return (
         await session.scalar(

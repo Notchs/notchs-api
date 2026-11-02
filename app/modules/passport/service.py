@@ -25,14 +25,7 @@ from app.modules.locations.time import (
     week_of,
 )
 from app.modules.notches import badges as badge_rules
-from app.modules.notches.models import (
-    COUNTED_STATUSES,
-    Badge,
-    Notch,
-    NotchFlag,
-    NotchStatus,
-    UserBadge,
-)
+from app.modules.notches.models import Badge, NotchFlag, UserBadge
 from app.modules.passport.exceptions import (
     AreaInvalidException,
     MonthInvalidException,
@@ -67,6 +60,7 @@ from app.modules.passport.schemas import (
 )
 from app.modules.passport.schemas import Period as PeriodName
 from app.modules.rankings import service as rankings
+from app.modules.scans.models import COUNTED_STATUSES, Visit, VisitStatus
 from app.modules.users.display import first_name
 from app.modules.users.founding import seats_left
 from app.modules.users.models import MAX_FOUNDING_MEMBER_NO, User
@@ -76,7 +70,7 @@ from app.modules.venues.page import Places, venue_page
 
 MAX_REPORTS_PER_DAY = 5
 EARTH_RADIUS_M = 6_371_000
-_COUNTED = Notch.status.in_(COUNTED_STATUSES)
+_COUNTED = Visit.status.in_(COUNTED_STATUSES)
 
 
 def distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> int:
@@ -124,9 +118,9 @@ class PassportService:
         city = await self.home_city(user)
         area = await self.session.get(Area, user.area_id) if user.area_id else None
         first = await self.session.scalar(
-            select(Notch)
-            .where(Notch.user_id == user.id, _COUNTED)
-            .order_by(Notch.scanned_at)
+            select(Visit)
+            .where(Visit.user_id == user.id, _COUNTED)
+            .order_by(Visit.visited_at)
             .limit(1)
         )
         first_out = None
@@ -135,8 +129,8 @@ class PassportService:
             places = await Places.load(self.session, [venue])
             first_out = FirstNotchOut(
                 venue=places.brief(venue),
-                scanned_at=first.scanned_at,
-                time=local(first.scanned_at, places.tz(venue)).strftime("%H:%M"),
+                scanned_at=first.visited_at,
+                time=local(first.visited_at, places.tz(venue)).strftime("%H:%M"),
             )
         return MeOut(
             id=user.id,
@@ -149,7 +143,7 @@ class PassportService:
             founding_member_total=MAX_FOUNDING_MEMBER_NO,
             theme=user.theme,
             is_public=user.is_public,
-            notches_total=await self._count(Notch.user_id == user.id),
+            notches_total=await self._count(Visit.user_id == user.id),
             badges_count=await self._badges_count(user),
             cards_count=await self.session.scalar(
                 select(func.count()).where(NotchCard.user_id == user.id)
@@ -184,7 +178,7 @@ class PassportService:
         day = today(city.timezone)
         month = month_of(day)
         count = await self._count(
-            Notch.user_id == user.id, Notch.local_date.between(month.start, month.end)
+            Visit.user_id == user.id, Visit.visit_date.between(month.start, month.end)
         )
         rank = None
         notches_to_rank = None
@@ -213,15 +207,15 @@ class PassportService:
         """The place closest to Regular this month that isn't there yet."""
         row = (
             await self.session.execute(
-                select(Notch.venue_id, func.count().label("visits"))
+                select(Visit.venue_id, func.count().label("visits"))
                 .where(
-                    Notch.user_id == user.id,
+                    Visit.user_id == user.id,
                     _COUNTED,
-                    Notch.local_date.between(month.start, month.end),
+                    Visit.visit_date.between(month.start, month.end),
                 )
-                .group_by(Notch.venue_id)
+                .group_by(Visit.venue_id)
                 .having(func.count() < badge_rules.REGULAR_VISITS)
-                .order_by(func.count().desc(), func.max(Notch.scanned_at).desc())
+                .order_by(func.count().desc(), func.max(Visit.visited_at).desc())
                 .limit(1)
             )
         ).one_or_none()
@@ -244,7 +238,7 @@ class PassportService:
         """ONE place they have never notched: trending first, then First Notch spots."""
         mine = set(
             await self.session.scalars(
-                select(distinct(Notch.venue_id)).where(Notch.user_id == user.id, _COUNTED)
+                select(distinct(Visit.venue_id)).where(Visit.user_id == user.id, _COUNTED)
             )
         )
         for count in await rankings.trending(self.session, city.id, day, limit=10):
@@ -283,20 +277,20 @@ class PassportService:
             raise MonthInvalidException() from exc
         notches = (
             await self.session.scalars(
-                select(Notch)
+                select(Visit)
                 .where(
-                    Notch.user_id == user.id,
+                    Visit.user_id == user.id,
                     _COUNTED,
-                    Notch.local_date.between(period.start, period.end),
+                    Visit.visit_date.between(period.start, period.end),
                 )
-                .order_by(Notch.scanned_at.desc())
+                .order_by(Visit.visited_at.desc())
             )
         ).all()
         items = await self._notch_outs(notches)
         all_time = (
             await self.session.execute(
-                select(func.count(), func.count(distinct(Notch.venue_id))).where(
-                    Notch.user_id == user.id, _COUNTED
+                select(func.count(), func.count(distinct(Visit.venue_id))).where(
+                    Visit.user_id == user.id, _COUNTED
                 )
             )
         ).one()
@@ -329,21 +323,21 @@ class PassportService:
         note = f"Customer report: {message.strip()}"
         if note not in (notch.flag_note or ""):  # a double tap or retry adds it once
             notch.flag_note = f"{notch.flag_note} {note}" if notch.flag_note else note
-        if notch.status == NotchStatus.VERIFIED:
-            notch.status = NotchStatus.FLAGGED
+        if notch.status == VisitStatus.VALID:
+            notch.status = VisitStatus.FLAGGED
         await self.session.flush()
         return (await self._notch_outs([notch]))[0]
 
-    async def _own_notch(self, user: User, code: str, *, for_update: bool = False) -> Notch:
-        query = select(Notch).where(
-            Notch.notch_code == code.strip().upper(), Notch.user_id == user.id
+    async def _own_notch(self, user: User, code: str, *, for_update: bool = False) -> Visit:
+        query = select(Visit).where(
+            Visit.notch_code == code.strip().upper(), Visit.user_id == user.id
         )
         notch = await self.session.scalar(query.with_for_update() if for_update else query)
         if notch is None:
             raise NotchNotFoundException()
         return notch
 
-    async def _notch_outs(self, notches: Sequence[Notch]) -> list[NotchOut]:
+    async def _notch_outs(self, notches: Sequence[Visit]) -> list[NotchOut]:
         venues = (
             {
                 v.id: v
@@ -362,12 +356,12 @@ class PassportService:
                 NotchOut(
                     notch_code=notch.notch_code,
                     venue=places.brief(venue),
-                    scanned_at=notch.scanned_at,
-                    local_date=notch.local_date,
-                    time=local(notch.scanned_at, places.tz(venue)).strftime("%H:%M"),
+                    scanned_at=notch.visited_at,
+                    local_date=notch.visit_date,
+                    time=local(notch.visited_at, places.tz(venue)).strftime("%H:%M"),
                     notch_no=notch.notch_no,
                     status=notch.status,
-                    under_review=notch.status == NotchStatus.FLAGGED,
+                    under_review=notch.status == VisitStatus.FLAGGED,
                 )
             )
         return out
@@ -428,14 +422,14 @@ class PassportService:
             case Badge.REGULAR:
                 row = (
                     await self.session.execute(
-                        select(Notch.venue_id, func.count().label("visits"))
+                        select(Visit.venue_id, func.count().label("visits"))
                         .where(
-                            Notch.user_id == user.id,
+                            Visit.user_id == user.id,
                             _COUNTED,
-                            Notch.local_date.between(month_of(day).start, month_of(day).end),
+                            Visit.visit_date.between(month_of(day).start, month_of(day).end),
                         )
-                        .group_by(Notch.venue_id)
-                        .order_by(func.count().desc(), func.max(Notch.scanned_at).desc())
+                        .group_by(Visit.venue_id)
+                        .order_by(func.count().desc(), func.max(Visit.visited_at).desc())
                         .limit(1)
                     )
                 ).one_or_none()
@@ -565,19 +559,19 @@ class PassportService:
         visits = dict(
             (
                 await self.session.execute(
-                    select(Notch.venue_id, func.count())
+                    select(Visit.venue_id, func.count())
                     .where(
-                        Notch.user_id == user.id,
+                        Visit.user_id == user.id,
                         _COUNTED,
-                        Notch.local_date.between(month.start, month.end),
+                        Visit.visit_date.between(month.start, month.end),
                     )
-                    .group_by(Notch.venue_id)
+                    .group_by(Visit.venue_id)
                 )
             ).all()
         )
         ever = set(
             await self.session.scalars(
-                select(distinct(Notch.venue_id)).where(Notch.user_id == user.id, _COUNTED)
+                select(distinct(Visit.venue_id)).where(Visit.user_id == user.id, _COUNTED)
             )
         )
         trending_ids = {
@@ -640,9 +634,9 @@ class PassportService:
         page = await venue_page(self.session, venue)
         tz = await self.session.scalar(select(City.timezone).where(City.id == venue.city_id))
         month = month_of(today(tz))
-        mine = Notch.user_id == user.id, Notch.venue_id == venue.id, _COUNTED
-        this_month = await self._count(*mine, Notch.local_date.between(month.start, month.end))
-        last = await self.session.scalar(select(func.max(Notch.local_date)).where(*mine))
+        mine = Visit.user_id == user.id, Visit.venue_id == venue.id, _COUNTED
+        this_month = await self._count(*mine, Visit.visit_date.between(month.start, month.end))
+        last = await self.session.scalar(select(func.max(Visit.visit_date)).where(*mine))
         return PassportVenueOut(
             **page.model_dump(),
             you=YourVisitsOut(
@@ -661,17 +655,17 @@ class PassportService:
         period = Period(date(year, 1, 1), date(year, 12, 31))
         rows = (
             await self.session.execute(
-                select(Notch.venue_id, Venue.name, Notch.local_date)
-                .join(Venue, Venue.id == Notch.venue_id)
+                select(Visit.venue_id, Venue.name, Visit.visit_date)
+                .join(Venue, Venue.id == Visit.venue_id)
                 .where(
-                    Notch.user_id == user.id,
+                    Visit.user_id == user.id,
                     _COUNTED,
-                    Notch.local_date.between(period.start, period.end),
+                    Visit.visit_date.between(period.start, period.end),
                 )
             )
         ).all()
         per_venue = Counter((row.venue_id, row.name) for row in rows)
-        per_month = Counter(row.local_date.replace(day=1) for row in rows)
+        per_month = Counter(row.visit_date.replace(day=1) for row in rows)
         standing = await rankings.standing(self.session, user.id, city.id, period) if rows else None
         top_place = per_venue.most_common(1)[0] if per_venue else None
         busiest = per_month.most_common(1)[0] if per_month else None
@@ -704,7 +698,7 @@ class PassportService:
         """Everything Notchs holds about the customer, as plain JSON."""
         notches = (
             await self.session.scalars(
-                select(Notch).where(Notch.user_id == user.id).order_by(Notch.scanned_at)
+                select(Visit).where(Visit.user_id == user.id).order_by(Visit.visited_at)
             )
         ).all()
         venue_names = (
@@ -743,7 +737,7 @@ class PassportService:
                 {
                     "notch_code": n.notch_code,
                     "venue": venue_names.get(n.venue_id),
-                    "scanned_at": n.scanned_at.isoformat(),
+                    "scanned_at": n.visited_at.isoformat(),
                     "notch_no": n.notch_no,
                     "status": n.status,
                 }

@@ -13,7 +13,8 @@ from app.modules.auth.access_tokens import create_access_token
 from app.modules.auth.cookies import access_cookie_name
 from app.modules.auth.enums import SubjectType
 from app.modules.locations.models import Area, City
-from app.modules.notches.codes import totp, window_of
+from app.modules.scans.verifier import code_at as totp_at
+from app.modules.scans.verifier import slot_of
 from app.modules.users.models import User
 from app.modules.venues.models import (
     CounterDevice,
@@ -21,6 +22,12 @@ from app.modules.venues.models import (
     VenueCategory,
     VenueMember,
     VenueStatus,
+)
+from app.modules.whatsapp.models import (
+    MessageDirection,
+    MessageStatus,
+    MessageType,
+    WhatsAppMessage,
 )
 
 # A fixed base32 secret, so tests can make valid codes.
@@ -105,7 +112,7 @@ async def user(
 
 def code_at(moment: datetime, *, offset: int = 0, interval: int = 30) -> str:
     """The counter's code for the window `offset` steps from `moment`'s."""
-    return totp(SECRET, window_of(moment.timestamp(), interval) + offset)
+    return totp_at(SECRET, slot_of(moment.timestamp(), interval) + offset)
 
 
 def ago(**kwargs: float) -> datetime:
@@ -145,15 +152,32 @@ def login(account: User | VenueMember | AdminUser) -> dict[str, str]:
     return {access_cookie_name(subject): token}
 
 
+async def message_id(session: AsyncSession):
+    """A stored inbound message for a scan to come from: every scan session has one."""
+    row = WhatsAppMessage(
+        direction=MessageDirection.IN,
+        phone_e164="+919800000000",
+        message_type=MessageType.TEXT,
+        status=MessageStatus.RECEIVED,
+        wa_message_id=f"wamid.test.{new_uuid().hex}",
+    )
+    session.add(row)
+    await session.flush()
+    return row.id
+
+
 async def notch_at(
     session: AsyncSession, redis: object, user_row: User, venue_row: Venue, moment: datetime
 ):
     """A real check-in through the service, at `moment`."""
     from app.modules.notches.checkin import CheckInService
-    from app.modules.notches.codes import ScanMessage
+    from app.modules.scans.parser import Scan
 
     result = await CheckInService(session, redis).scan(  # type: ignore[arg-type]
-        user_row, ScanMessage(venue_row.venue_code, code_at(moment)), scanned_at=moment
+        user_row,
+        Scan(venue_row.scan_code, code_at(moment)),
+        scanned_at=moment,
+        whatsapp_message_id=await message_id(session),
     )
     assert result.notch is not None, result.outcome
     return result.notch

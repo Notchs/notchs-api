@@ -23,7 +23,7 @@ from app.modules.cards.models import VenueCard
 from app.modules.locations.models import Area, City
 from app.modules.locations.time import Period, last_days, local, month_label, month_of, today
 from app.modules.notches.badges import REGULAR_VISITS
-from app.modules.notches.models import COUNTED_STATUSES, Notch
+from app.modules.scans.models import COUNTED_STATUSES, Visit
 from app.modules.venues.counters import counter_out
 from app.modules.venues.dashboard_schemas import (
     BarOut,
@@ -60,7 +60,7 @@ MAX_EXPORT_DAYS = 366
 TODAY_VISITS_SHOWN = 20
 _DAY_LETTERS = "MTWTFSS"
 EN_DASH = "\u2013"  # the design writes hour ranges with an en dash
-_COUNTED = Notch.status.in_(COUNTED_STATUSES)
+_COUNTED = Visit.status.in_(COUNTED_STATUSES)
 
 
 def ordinal(n: int) -> str:
@@ -120,9 +120,9 @@ class DashboardService:
         return venue, city
 
     def _at(self, venue_id: uuid.UUID, period: Period | None = None) -> list[Any]:
-        conditions = [Notch.venue_id == venue_id, _COUNTED]
+        conditions = [Visit.venue_id == venue_id, _COUNTED]
         if period is not None:
-            conditions.append(Notch.local_date.between(period.start, period.end))
+            conditions.append(Visit.visit_date.between(period.start, period.end))
         return conditions
 
     async def _customers(self, conditions: list[Any]) -> tuple[int, int]:
@@ -130,9 +130,9 @@ class DashboardService:
         row = (
             await self.session.execute(
                 select(
-                    func.count(func.distinct(Notch.user_id)),
-                    func.count().filter(Notch.user_id.is_(None)),
-                    func.count().filter(Notch.user_visit_no == 1),
+                    func.count(func.distinct(Visit.user_id)),
+                    func.count().filter(Visit.user_id.is_(None)),
+                    func.count().filter(Visit.visit_no_at_venue == 1),
                 ).where(*conditions)
             )
         ).one()
@@ -152,18 +152,18 @@ class DashboardService:
         per_day = dict(
             (
                 await self.session.execute(
-                    select(Notch.local_date, func.count())
+                    select(Visit.visit_date, func.count())
                     .where(*conditions)
-                    .group_by(Notch.local_date)
+                    .group_by(Visit.visit_date)
                 )
             ).all()
         )
         hours = dict(
             (
                 await self.session.execute(
-                    select(Notch.local_hour, func.count())
+                    select(Visit.local_hour, func.count())
                     .where(*conditions)
-                    .group_by(Notch.local_hour)
+                    .group_by(Visit.local_hour)
                 )
             ).all()
         )
@@ -207,14 +207,14 @@ class DashboardService:
         venue, _ = await self._venue(member)
         rows = await self.session.execute(
             select(
-                Notch.local_date,
+                Visit.visit_date,
                 func.count(),
-                func.count(func.distinct(Notch.user_id))
-                + func.count().filter(Notch.user_id.is_(None)),
-                func.count().filter(Notch.user_visit_no == 1),
+                func.count(func.distinct(Visit.user_id))
+                + func.count().filter(Visit.user_id.is_(None)),
+                func.count().filter(Visit.visit_no_at_venue == 1),
             )
             .where(*self._at(venue.id, Period(start, end)))
-            .group_by(Notch.local_date)
+            .group_by(Visit.visit_date)
         )
         found = {d: DayOut(date=d, notches=n, customers=c, new_customers=k) for d, n, c, k in rows}
         return [
@@ -233,8 +233,8 @@ class DashboardService:
         customers, new = await self._customers(self._at(venue.id, self._range(range_, day)))
         per_customer = (
             select(func.count().label("visits"))
-            .where(*self._at(venue.id, month_of(day)), Notch.user_id.is_not(None))
-            .group_by(Notch.user_id)
+            .where(*self._at(venue.id, month_of(day)), Visit.user_id.is_not(None))
+            .group_by(Visit.user_id)
             .subquery()
         )
         regulars = await self.session.scalar(
@@ -243,9 +243,9 @@ class DashboardService:
             .where(per_customer.c.visits >= REGULAR_VISITS)
         )
         today_notches = await self.session.scalars(
-            select(Notch)
+            select(Visit)
             .where(*self._at(venue.id, Period(day, day)))
-            .order_by(Notch.scanned_at.desc())
+            .order_by(Visit.visited_at.desc())
             .limit(TODAY_VISITS_SHOWN)
         )
         return CustomersOut(
@@ -257,13 +257,13 @@ class DashboardService:
         )
 
     @staticmethod
-    def _visit(notch: Notch, tz: str | None) -> VisitOut:
+    def _visit(notch: Visit, tz: str | None) -> VisitOut:
         return VisitOut(
-            scanned_at=notch.scanned_at,
-            time=local(notch.scanned_at, tz).strftime("%H:%M"),
+            scanned_at=notch.visited_at,
+            time=local(notch.visited_at, tz).strftime("%H:%M"),
             notch_no=notch.notch_no,
-            visit_no=notch.user_visit_no,
-            label=f"{ordinal(notch.user_visit_no)} visit",
+            visit_no=notch.visit_no_at_venue,
+            label=f"{ordinal(notch.visit_no_at_venue)} visit",
         )
 
     async def visits(
@@ -273,9 +273,9 @@ class DashboardService:
         day = day or today(city.timezone)
         conditions = self._at(venue.id, Period(day, day))
         rows = await self.session.scalars(
-            select(Notch)
+            select(Visit)
             .where(*conditions)
-            .order_by(Notch.scanned_at.desc())
+            .order_by(Visit.visited_at.desc())
             .offset(pagination.offset)
             .limit(pagination.size)
         )
@@ -288,7 +288,7 @@ class DashboardService:
             raise RangeInvalidException(f"Export up to {MAX_EXPORT_DAYS} days at a time.")
         venue, city = await self._venue(member)
         rows = await self.session.scalars(
-            select(Notch).where(*self._at(venue.id, Period(start, end))).order_by(Notch.scanned_at)
+            select(Visit).where(*self._at(venue.id, Period(start, end))).order_by(Visit.visited_at)
         )
         out = io.StringIO()
         writer = csv.writer(out)
@@ -296,11 +296,11 @@ class DashboardService:
         for notch in rows:
             writer.writerow(
                 [
-                    notch.local_date.isoformat(),
-                    local(notch.scanned_at, city.timezone).strftime("%H:%M"),
+                    notch.visit_date.isoformat(),
+                    local(notch.visited_at, city.timezone).strftime("%H:%M"),
                     notch.notch_no,
-                    notch.user_visit_no,
-                    "yes" if notch.user_visit_no == 1 else "no",
+                    notch.visit_no_at_venue,
+                    "yes" if notch.visit_no_at_venue == 1 else "no",
                 ]
             )
         return out.getvalue()

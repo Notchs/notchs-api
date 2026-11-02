@@ -2,7 +2,8 @@
 counted Notchs with SQL. At pilot size (a few thousand customers) this is fast enough; add a
 Redis cache in front if it ever is not.
 
-    customer rank   by Notchs in the period, ties to whoever got there first; shown from
+    customer rank   by points in the period (never shown; customers see Notchs and rank), ties
+                    to whoever got there first; shown from
                     RANK_FROM_NOTCHES Notchs, "Top X%" only with TOP_PERCENT_MIN_ACTIVE
                     customers active in the period (Page Inventory C2, C7; QR spec)
     venue ranking   by counted Notchs (verified visits) in a week, never paid placement
@@ -20,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.locations.models import Area
 from app.modules.locations.time import Period, last_days
-from app.modules.notches.models import COUNTED_STATUSES, Notch
+from app.modules.scans.models import COUNTED_STATUSES, PointsEntry, Visit
 from app.modules.users.display import public_name
 from app.modules.users.models import User, UserStatus
 from app.modules.venues.models import Venue, VenueStatus
@@ -58,12 +59,12 @@ def _counted(city_id: uuid.UUID, period: Period | None) -> list:
     """Counted Notchs of active customers: blocked accounts, and closed ones waiting for the
     wipe, never appear on a leaderboard or count towards "Top X%"."""
     conditions = [
-        Notch.city_id == city_id,
-        Notch.status.in_(COUNTED_STATUSES),
-        Notch.user_id.in_(select(User.id).where(User.status == UserStatus.ACTIVE)),
+        Visit.city_id == city_id,
+        Visit.status.in_(COUNTED_STATUSES),
+        Visit.user_id.in_(select(User.id).where(User.status == UserStatus.ACTIVE)),
     ]
     if period is not None:
-        conditions.append(Notch.local_date.between(period.start, period.end))
+        conditions.append(Visit.visit_date.between(period.start, period.end))
     return conditions
 
 
@@ -76,24 +77,31 @@ def _ranked(
 ):
     conditions = _counted(city_id, period)
     if categories:
-        conditions.append(Notch.category.in_(categories))
+        conditions.append(Visit.category.in_(categories))
     if area_id is not None:
-        conditions.append(Notch.area_id == area_id)
+        conditions.append(Visit.area_id == area_id)
+    points = (
+        select(PointsEntry.visit_id, func.sum(PointsEntry.points).label("points"))
+        .group_by(PointsEntry.visit_id)
+        .subquery()
+    )
     counts = (
         select(
-            Notch.user_id.label("user_id"),
+            Visit.user_id.label("user_id"),
             func.count().label("notches"),
-            func.max(Notch.scanned_at).label("last_at"),
+            func.coalesce(func.sum(points.c.points), 0).label("points"),
+            func.max(Visit.visited_at).label("last_at"),
         )
+        .join(points, points.c.visit_id == Visit.id, isouter=True)
         .where(*conditions)
-        .group_by(Notch.user_id)
+        .group_by(Visit.user_id)
         .subquery()
     )
     return select(
         counts.c.user_id,
         counts.c.notches,
         func.row_number()
-        .over(order_by=(counts.c.notches.desc(), counts.c.last_at.asc(), counts.c.user_id))
+        .over(order_by=(counts.c.points.desc(), counts.c.last_at.asc(), counts.c.user_id))
         .label("rank"),
     ).subquery()
 
@@ -126,7 +134,7 @@ async def standing(
 async def active_users(session: AsyncSession, city_id: uuid.UUID, period: Period | None) -> int:
     return (
         await session.scalar(
-            select(func.count(func.distinct(Notch.user_id))).where(*_counted(city_id, period))
+            select(func.count(func.distinct(Visit.user_id))).where(*_counted(city_id, period))
         )
         or 0
     )
@@ -180,9 +188,9 @@ def _live_venues(city_id: uuid.UUID) -> list:
 
 def _visits_between(start: date, end: date):
     return (
-        select(Notch.venue_id.label("venue_id"), func.count().label("visits"))
-        .where(Notch.status.in_(COUNTED_STATUSES), Notch.local_date.between(start, end))
-        .group_by(Notch.venue_id)
+        select(Visit.venue_id.label("venue_id"), func.count().label("visits"))
+        .where(Visit.status.in_(COUNTED_STATUSES), Visit.visit_date.between(start, end))
+        .group_by(Visit.venue_id)
         .subquery()
     )
 

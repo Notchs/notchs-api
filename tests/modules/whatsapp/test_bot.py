@@ -7,10 +7,10 @@ from fakeredis import FakeAsyncRedis
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.notches.codes import message_template
-from app.modules.notches.models import Notch
+from app.modules.scans.models import Visit
 from app.modules.users.deletion import wipe_deleted
 from app.modules.users.models import DeletionStatus, User, UserDeletion, UserStatus
+from app.modules.venues import scan_codes
 from app.modules.whatsapp.bot import WhatsAppBot
 from app.modules.whatsapp.dev_router import CapturingClient, meta_payload
 from app.modules.whatsapp.models import WhatsAppMessage
@@ -49,9 +49,7 @@ async def _live_venue(db: AsyncSession):
 
 
 def _scan_text(venue) -> str:
-    return message_template(venue.name, venue.venue_code).replace(
-        "{code}", f.code_at(datetime.now(UTC))
-    )
+    return scan_codes.scan_text(venue.scan_code, f.code_at(datetime.now(UTC)))
 
 
 async def test_first_scan_asks_consent_then_notches(
@@ -89,7 +87,7 @@ async def test_second_scan_same_day_and_expired_code(
     assert await chat.send(_scan_text(venue)) == [
         "*Already notched* at Kahwa House today. Come back tomorrow.\n[My passport]"
     ]
-    stale = f"Notch me at Kahwa House · 000000 [{venue.venue_code}]"
+    stale = scan_codes.scan_text(venue.scan_code, "000000")
     if f.code_at(datetime.now(UTC)) != "000000":
         assert await chat.send(stale) == [
             "This *code expired*. Scan the screen at the counter again."
@@ -143,7 +141,7 @@ async def test_delete_then_yes_closes_and_the_wipe_removes_everything(
         select(func.count()).select_from(WhatsAppMessage).where(WhatsAppMessage.phone_e164 == PHONE)
     )
     assert left == 0
-    notch = await db.scalar(select(Notch).where(Notch.venue_id == venue.id))
+    notch = await db.scalar(select(Visit).where(Visit.venue_id == venue.id))
     assert notch is not None and notch.user_id is None  # still counts for the venue
     deletion = await db.scalar(select(UserDeletion))
     assert deletion.status == DeletionStatus.DONE and deletion.phone_last4 == PHONE[-4:]

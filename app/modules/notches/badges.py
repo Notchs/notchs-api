@@ -20,7 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.ids import new_uuid
 from app.modules.locations.time import month_of
-from app.modules.notches.models import COUNTED_STATUSES, Badge, Notch, UserBadge
+from app.modules.notches.models import Badge, UserBadge
+from app.modules.scans.models import COUNTED_STATUSES, Visit
 from app.modules.users.models import MAX_FOUNDING_MEMBER_NO, User
 from app.modules.venues.models import Venue, VenueCategory
 
@@ -52,16 +53,16 @@ def is_night(hour: int) -> bool:
     return hour >= NIGHT_STARTS_HOUR or hour < NIGHT_ENDS_HOUR
 
 
-_NIGHT = or_(Notch.local_hour >= NIGHT_STARTS_HOUR, Notch.local_hour < NIGHT_ENDS_HOUR)
-_COUNTED = Notch.status.in_(COUNTED_STATUSES)
+_NIGHT = or_(Visit.local_hour >= NIGHT_STARTS_HOUR, Visit.local_hour < NIGHT_ENDS_HOUR)
+_COUNTED = Visit.status.in_(COUNTED_STATUSES)
 
 
 async def venue_customer_count(session: AsyncSession, venue_id: uuid.UUID) -> int:
     """Different customers who have notched here (deleted customers no longer count)."""
     return (
         await session.scalar(
-            select(func.count(distinct(Notch.user_id))).where(
-                Notch.venue_id == venue_id, _COUNTED, Notch.user_id.is_not(None)
+            select(func.count(distinct(Visit.user_id))).where(
+                Visit.venue_id == venue_id, _COUNTED, Visit.user_id.is_not(None)
             )
         )
         or 0
@@ -79,10 +80,10 @@ async def visits_in_month(
     return (
         await session.scalar(
             select(func.count()).where(
-                Notch.user_id == user_id,
-                Notch.venue_id == venue_id,
+                Visit.user_id == user_id,
+                Visit.venue_id == venue_id,
                 _COUNTED,
-                Notch.local_date.between(month.start, month.end),
+                Visit.visit_date.between(month.start, month.end),
             )
         )
         or 0
@@ -91,7 +92,7 @@ async def visits_in_month(
 
 async def night_visits(session: AsyncSession, user_id: uuid.UUID) -> int:
     return (
-        await session.scalar(select(func.count()).where(Notch.user_id == user_id, _COUNTED, _NIGHT))
+        await session.scalar(select(func.count()).where(Visit.user_id == user_id, _COUNTED, _NIGHT))
         or 0
     )
 
@@ -99,8 +100,8 @@ async def night_visits(session: AsyncSession, user_id: uuid.UUID) -> int:
 async def cafes_notched(session: AsyncSession, user_id: uuid.UUID) -> int:
     return (
         await session.scalar(
-            select(func.count(distinct(Notch.venue_id))).where(
-                Notch.user_id == user_id, _COUNTED, Notch.category == VenueCategory.CAFE
+            select(func.count(distinct(Visit.venue_id))).where(
+                Visit.user_id == user_id, _COUNTED, Visit.category == VenueCategory.CAFE
             )
         )
         or 0
@@ -113,11 +114,11 @@ async def best_month_visits(session: AsyncSession, user_id: uuid.UUID, day: date
     per_venue = (
         select(func.count().label("n"))
         .where(
-            Notch.user_id == user_id,
+            Visit.user_id == user_id,
             _COUNTED,
-            Notch.local_date.between(month.start, month.end),
+            Visit.visit_date.between(month.start, month.end),
         )
-        .group_by(Notch.venue_id)
+        .group_by(Visit.venue_id)
         .subquery()
     )
     return await session.scalar(select(func.max(per_venue.c.n))) or 0
@@ -135,7 +136,7 @@ async def award(
     *,
     at: datetime,
     venue_id: uuid.UUID | None = None,
-    notch_id: uuid.UUID | None = None,
+    visit_id: uuid.UUID | None = None,
 ) -> bool:
     """Give the badge if the customer does not have it yet. True if it is new."""
     new_id = await session.scalar(
@@ -145,7 +146,7 @@ async def award(
             user_id=user_id,
             badge=badge,
             venue_id=venue_id,
-            notch_id=notch_id,
+            visit_id=visit_id,
             earned_at=at,
         )
         .on_conflict_do_nothing(constraint="uq_user_badges_user_id_badge")
@@ -155,7 +156,7 @@ async def award(
 
 
 async def award_after_notch(
-    session: AsyncSession, user: User, venue: Venue, notch: Notch
+    session: AsyncSession, user: User, venue: Venue, notch: Visit
 ) -> list[Badge]:
     """Everything this Notch earned, in the order the bot announces them."""
     have = set(await earned(session, user.id))
@@ -166,24 +167,24 @@ async def award_after_notch(
             session,
             user.id,
             badge,
-            at=notch.scanned_at,
+            at=notch.visited_at,
             venue_id=venue.id if at_venue else None,
-            notch_id=notch.id,
+            visit_id=notch.id,
         ):
             new.append(badge)
 
     if Badge.FOUNDING_MEMBER not in have and user.founding_member_no is not None:
         # Announced by its own message (B8), so it is awarded but not listed as "new".
-        await award(session, user.id, Badge.FOUNDING_MEMBER, at=notch.scanned_at)
+        await award(session, user.id, Badge.FOUNDING_MEMBER, at=notch.visited_at)
     if (
         Badge.FIRST_NOTCH not in have
-        and notch.user_visit_no == 1
+        and notch.visit_no_at_venue == 1
         and await venue_customer_count(session, venue.id) <= venue.first_notch_spots
     ):
         await give(Badge.FIRST_NOTCH, at_venue=True)
     if (
         Badge.REGULAR not in have
-        and await visits_in_month(session, user.id, venue.id, notch.local_date) >= REGULAR_VISITS
+        and await visits_in_month(session, user.id, venue.id, notch.visit_date) >= REGULAR_VISITS
     ):
         await give(Badge.REGULAR, at_venue=True)
     if (

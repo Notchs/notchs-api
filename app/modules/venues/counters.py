@@ -32,12 +32,12 @@ from app.modules.auth.sessions import Subject, active_venue_member
 from app.modules.auth.tokens import hash_token, lifetime, new_token
 from app.modules.locations.models import Area, City
 from app.modules.locations.time import today
-from app.modules.notches.codes import message_template
-from app.modules.notches.models import COUNTED_STATUSES, Notch
+from app.modules.scans.models import COUNTED_STATUSES, Visit
+from app.modules.venues import scan_codes
 from app.modules.venues.counter_schemas import (
     CounterOut,
     DisplayConfigOut,
-    DisplayQrOut,
+    DisplayScanOut,
     DisplayVenueOut,
     HeartbeatIn,
     HeartbeatOut,
@@ -214,9 +214,9 @@ class CounterService:
         return (
             await self.session.scalar(
                 select(func.count()).where(
-                    Notch.venue_id == venue.id,
-                    Notch.local_date == today(tz),
-                    Notch.status.in_(COUNTED_STATUSES),
+                    Visit.venue_id == venue.id,
+                    Visit.visit_date == today(tz),
+                    Visit.status.in_(COUNTED_STATUSES),
                 )
             )
             or 0
@@ -237,15 +237,16 @@ class CounterService:
             counter_id=counter.id,
             label=counter.label,
             venue=DisplayVenueOut(
-                name=venue.name, venue_code=venue.venue_code, slug=venue.slug, area=area
+                name=venue.name,
+                venue_code=venue.venue_code,
+                slug=venue.slug,
+                scan_code=venue.scan_code,
+                area=area,
             ),
+            scan=_scan_settings(venue),
             totp=TotpSettingsOut(
                 secret=crypto.decrypt(counter.totp_secret_enc),
                 interval_s=counter.code_interval_s,
-            ),
-            qr=DisplayQrOut(
-                whatsapp_number=settings.WHATSAPP_PUBLIC_NUMBER.removeprefix("+"),
-                message_template=message_template(venue.name, venue.venue_code),
             ),
             notched_today=await self.notched_today(venue),
             server_time=datetime.now(UTC),
@@ -256,3 +257,15 @@ class CounterService:
             CounterDevice.venue_id == venue_id, CounterDevice.revoked_at.is_(None)
         )
         return await self.session.scalar(query.with_for_update() if for_update else query)
+
+
+def _scan_settings(venue: Venue) -> DisplayScanOut | None:
+    number = settings.WHATSAPP_PUBLIC_NUMBER
+    if not number:
+        return None
+    return DisplayScanOut(
+        whatsapp_number=number,
+        message=scan_codes.SCAN_MESSAGE,
+        link_template=scan_codes.scan_link_template(number, venue.scan_code),
+        text_example=scan_codes.scan_text(venue.scan_code, "482913"),
+    )

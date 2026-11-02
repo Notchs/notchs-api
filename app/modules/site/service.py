@@ -13,8 +13,8 @@ from app.common.ids import new_code, new_uuid
 from app.core import rate_limit
 from app.modules.locations.models import Area, City
 from app.modules.locations.time import Period, month_label, month_of, today, week_of
-from app.modules.notches.models import COUNTED_STATUSES, Notch, NotchStatus
 from app.modules.rankings import service as rankings
+from app.modules.scans.models import COUNTED_STATUSES, Visit, VisitStatus
 from app.modules.site.exceptions import (
     CategoryNotFoundException,
     CityNotFoundException,
@@ -178,10 +178,10 @@ class SiteService:
         month = month_of(day)
         month_counts = (
             await self.session.execute(
-                select(func.count(), func.count(distinct(Notch.user_id))).where(
-                    Notch.city_id == city.id,
-                    Notch.status.in_(COUNTED_STATUSES),
-                    Notch.local_date.between(month.start, month.end),
+                select(func.count(), func.count(distinct(Visit.user_id))).where(
+                    Visit.city_id == city.id,
+                    Visit.status.in_(COUNTED_STATUSES),
+                    Visit.visit_date.between(month.start, month.end),
                 )
             )
         ).one()
@@ -214,8 +214,8 @@ class SiteService:
 
     async def _first_notch_day(self, city: City) -> date | None:
         return await self.session.scalar(
-            select(func.min(Notch.local_date)).where(
-                Notch.city_id == city.id, Notch.status.in_(COUNTED_STATUSES)
+            select(func.min(Visit.visit_date)).where(
+                Visit.city_id == city.id, Visit.status.in_(COUNTED_STATUSES)
             )
         )
 
@@ -325,13 +325,13 @@ class SiteService:
         """Every finished month since the first Notch: visits verified, fakes blocked. Months
         follow IST, the pilot's only timezone."""
         this_month = month_of(today(None)).start
-        month = cast(func.date_trunc("month", Notch.local_date), Date).label("month")
+        month = cast(func.date_trunc("month", Visit.visit_date), Date).label("month")
         rows = (
             await self.session.execute(
                 select(
                     month,
-                    func.count().filter(Notch.status.in_(COUNTED_STATUSES)),
-                    func.count().filter(Notch.status == NotchStatus.REJECTED),
+                    func.count().filter(Visit.status.in_(COUNTED_STATUSES)),
+                    func.count().filter(Visit.status == VisitStatus.REVOKED),
                 )
                 .group_by(month)
                 .order_by(month)

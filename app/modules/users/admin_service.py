@@ -16,7 +16,8 @@ from app.modules.audit import service as audit
 from app.modules.auth.enums import SubjectType
 from app.modules.auth.sessions import SessionService, Subject
 from app.modules.locations.models import Area
-from app.modules.notches.models import Notch, UserBadge
+from app.modules.notches.models import UserBadge
+from app.modules.scans.models import Visit
 from app.modules.users.admin_schemas import (
     AdminUserOut,
     AdminUserRowOut,
@@ -186,10 +187,10 @@ class UserAdminService:
             else None
         )
         visits = await self.session.execute(
-            select(Notch.notch_code, Venue.name, Notch.scanned_at, Notch.status)
-            .join(Venue, Venue.id == Notch.venue_id)
-            .where(Notch.user_id == user.id)
-            .order_by(Notch.scanned_at.desc())
+            select(Visit.notch_code, Venue.name, Visit.visited_at, Visit.status)
+            .join(Venue, Venue.id == Visit.venue_id)
+            .where(Visit.user_id == user.id)
+            .order_by(Visit.visited_at.desc())
             .limit(RECENT_VISITS)
         )
         return AdminUserOut(
@@ -199,7 +200,7 @@ class UserAdminService:
             signup_source=user.signup_source,
             consent_at=user.consent_at,
             notches_total=await self.session.scalar(
-                select(func.count()).where(Notch.user_id == user.id)
+                select(func.count()).where(Visit.user_id == user.id)
             )
             or 0,
             badges=list(

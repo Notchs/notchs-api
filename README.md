@@ -184,6 +184,13 @@ month), because the code is part of the card's design.
 
 Add a row here when a new table gets a code. A prefix is never reused or changed.
 
+**Venue scan codes** are different: `venues.scan_code` (e.g. `KAHWA`) is what customers send to
+get notched. It is made from the venue's name when the venue is created (`KAHWA`, then `KAHWA2`...),
+3–10 capital letters and digits starting with a letter, unique, and an admin may change it. The
+counter phone's QR opens WhatsApp with **"Hey Notchs!, get me notched. KAHWA-482913"**, where
+`482913` is the live code it shows. `GET /api/v1/display/config` returns `scan.link_template`: replace
+`{code}` with the live code and draw it as a QR.
+
 ## Redis
 
 Redis holds rate limits, one-time codes, leaderboards and the job queue. Unlike Postgres it is
@@ -218,6 +225,7 @@ production refuse to start until the real values are set.
 | `WHATSAPP_API_VERSION` | Meta Graph API version, e.g. `v23.0`. |
 | `WHATSAPP_APP_SECRET` | Meta app secret (App settings → Basic). Checks the signature on every webhook call; without it, all are refused. Required in production. |
 | `WHATSAPP_VERIFY_TOKEN` | Any random string; also entered in Meta's webhook form. Required in production. |
+| `WHATSAPP_PUBLIC_NUMBER` | The number customers message, digits with the country code (e.g. `15556755530`, the test number). Counter phones put it in their scan QR. Required in production. |
 | `WHATSAPP_SWEEP_INTERVAL_SECONDS` | How often the API retries incoming messages left unhandled (default `60`; `0` turns it off). |
 | `WHATSAPP_PUBLIC_NUMBER` | The number customers message (E.164). The counter QR opens `wa.me/<number>`. The default is the design's **test** number: set the real one before launch. |
 | `SCHEDULER_ENABLED`, `SCHEDULER_INTERVAL_SECONDS` | Background jobs inside the API (see "Background jobs"). Default on, every 60 s. |
@@ -275,10 +283,10 @@ Pairing gives the counter a new secret, so a replaced phone's codes stop working
 moves the venue from `signed` to `counter_live`.
 
 The QR opens `https://wa.me/<qr.whatsapp_number>?text=<message>`, where the message is
-`qr.message_template` with `{code}` replaced by the current code, URL-encoded:
+`scan.link_template` with `{code}` replaced by the current code:
 
 ```
-Notch me at Kahwa House · 482913 [VEN-7K3M9QX2]
+Hey Notchs!, get me notched. KAHWA-482913
 ```
 
 (The design's QR spec drew the code as letters, `K7Q-29F [v07]`. The counter was built on
@@ -368,7 +376,7 @@ What the bot replies:
 | Customer sends | Bot |
 |---|---|
 | Their first message | Creates the customer (the phone number is their identity) |
-| A counter scan (`Notch me at … · 482913 [VEN-…]`) | See "Check-ins": Notched (B2), already today (B3), expired (B4), or consent first (B1); then Founding Member # (B8, with the first Notch) and new badges (B6) |
+| A counter scan (`Hey Notchs!, get me notched. KAHWA-482913`) | See "Check-ins": Notched (B2), already today (B3), expired (B4), or consent first (B1); then Founding Member # (B8, with the first Notch) and new badges (B6) |
 | Taps **I agree** (or types `I AGREE`) | Records 18+ and privacy consent, then notches the scan that was waiting |
 | Taps **Privacy notice** | The privacy page link |
 | `LOGIN`, or taps **🔑 Login link**, **My passport**, **See badges**, **See my card** | A single-use passport login link (15 minutes; at most 3 per 15 minutes), with `&next=/badges` or `&next=/cards/latest` for those buttons |
@@ -388,7 +396,7 @@ Logged in as an admin (role `admin`), outside production:
 POST /api/v1/dev/simulate-inbound
 {"phone": "98765 43210", "text": "LOGIN"}
 {"phone": "98765 43210", "button": "login"}   # a tap on the 🔑 Login link button
-{"phone": "98765 43210", "text": "Notch me at Kahwa House · 482913 [VEN-7K3M9QX2]"}
+{"phone": "98765 43210", "text": "Hey Notchs!, get me notched. KAHWA-482913"}
 {"phone": "98765 43210", "button": "consent_yes"}   # "I agree" after the first scan
 ```
 

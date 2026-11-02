@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import NullPool, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
 
+from app.clients.turnstile import get_turnstile_client
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.db.models import Base
@@ -18,6 +19,13 @@ from app.main import app
 # gets its own schema, dropped afterwards; without the variable they are skipped, so a local
 # `pytest` never touches the shared Neon database.
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+
+
+class PassingTurnstile:
+    """The CAPTCHA passes: tests don't call Cloudflare, whatever the local settings say."""
+
+    async def verify(self, token: str, *, ip: str | None = None) -> bool:
+        return True
 
 
 @pytest.fixture
@@ -96,6 +104,7 @@ async def api(db: AsyncSession, redis: FakeAsyncRedis) -> AsyncIterator[AsyncCli
 
     app.dependency_overrides[get_db_session] = _db
     app.dependency_overrides[get_redis] = lambda: redis
+    app.dependency_overrides[get_turnstile_client] = lambda: PassingTurnstile()
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url=f"http://test{settings.API_V1_PREFIX}"

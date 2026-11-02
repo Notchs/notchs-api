@@ -17,7 +17,8 @@ from app.modules.notches.admin_schemas import (
     ReviewNotchOut,
 )
 from app.modules.notches.admin_service import NotchReviewService
-from app.modules.notches.models import NotchStatus, SignalStatus
+from app.modules.notches.models import SignalStatus
+from app.modules.scans.models import VisitStatus
 
 router = APIRouter(prefix="/admin", tags=["Admin: proof review & fraud"])
 
@@ -38,7 +39,7 @@ async def notches(
     _: CurrentAdmin,
     service: ReviewDep,
     pagination: Pagination,
-    status: NotchStatus | None = NotchStatus.FLAGGED,
+    status: VisitStatus | None = VisitStatus.FLAGGED,
     venue_id: uuid.UUID | None = None,
 ) -> CustomResponse[PaginatedResponse[ReviewNotchOut]]:
     items, total = await service.queue(pagination, status=status, venue_id=venue_id)

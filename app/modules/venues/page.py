@@ -14,8 +14,8 @@ from app.core.config import settings
 from app.modules.locations.models import Area, City
 from app.modules.locations.time import local, month_of
 from app.modules.notches import badges
-from app.modules.notches.models import COUNTED_STATUSES, Notch
 from app.modules.rankings import service as rankings
+from app.modules.scans.models import COUNTED_STATUSES, Visit
 from app.modules.users.display import public_name
 from app.modules.users.models import User
 from app.modules.venues.hours import OpenStatus, status_at
@@ -106,15 +106,15 @@ async def regular_now(session: AsyncSession, venue: Venue, tz: str | None) -> Re
     row = (
         await session.execute(
             select(User.name, User.is_public, func.count().label("visits"))
-            .select_from(Notch)
-            .join(User, User.id == Notch.user_id)
+            .select_from(Visit)
+            .join(User, User.id == Visit.user_id)
             .where(
-                Notch.venue_id == venue.id,
-                Notch.status.in_(COUNTED_STATUSES),
-                Notch.local_date.between(month.start, month.end),
+                Visit.venue_id == venue.id,
+                Visit.status.in_(COUNTED_STATUSES),
+                Visit.visit_date.between(month.start, month.end),
             )
             .group_by(User.id)
-            .order_by(func.count().desc(), func.max(Notch.scanned_at).asc())
+            .order_by(func.count().desc(), func.max(Visit.visited_at).asc())
             .limit(1)
         )
     ).one_or_none()

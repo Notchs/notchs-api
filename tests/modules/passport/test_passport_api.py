@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.locations.time import local
-from app.modules.notches.models import Notch
+from app.modules.scans.models import Visit
 from app.modules.users.models import User, UserStatus
 from tests import factories as f
 
@@ -170,7 +170,7 @@ async def test_reporting_twice_records_it_once(
     for _ in range(2):
         await api.post(f"/me/notches/{code}/report", json={"message": "Wrong place"})
 
-    notch = await db.scalar(select(Notch).where(Notch.notch_code == code))
+    notch = await db.scalar(select(Visit).where(Visit.notch_code == code))
     assert notch.flag_note.count("Wrong place") == 1
 
 
@@ -178,7 +178,7 @@ async def test_someone_elses_notch_is_not_found(
     api: AsyncClient, db: AsyncSession, redis: FakeAsyncRedis
 ) -> None:
     *_, user = await _world(db, redis)
-    code = await db.scalar(select(Notch.notch_code).where(Notch.user_id == user.id))
+    code = await db.scalar(select(Visit.notch_code).where(Visit.user_id == user.id))
     api.cookies = f.login(await f.user(db))
 
     assert (await api.get(f"/me/notches/{code}")).status_code == 404

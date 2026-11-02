@@ -2,7 +2,7 @@
 
     every message      find the customer by phone, or create them (their first message is
                        sign-up). Blocked and deleted customers get no reply.
-    counter scan       "Notch me at Kahwa House · 482913 [VEN-7K3M9QX2]" (notches/codes.py):
+    counter scan       "Hey Notchs!, get me notched. KAHWA-482913" (notches/codes.py):
                        Notched (B2), already today (B3), expired (B4); the first ever scan asks
                        for consent first (B1). Then Founding Member (B8, once) and new badges (B6).
     I agree            records 18+ and privacy consent, then notches the scan that was waiting
@@ -37,10 +37,12 @@ from app.modules.auth.enums import TokenType
 from app.modules.auth.exceptions import AuthRateLimitedException, TokenInvalidException
 from app.modules.auth.tokens import lifetime
 from app.modules.notches.checkin import CheckInResult, CheckInService, Outcome
-from app.modules.notches.codes import parse_scan
+from app.modules.scans.parser import NoCode, parse
 from app.modules.users.consent import record_privacy_consent
 from app.modules.users.deletion import DeletionService
+from app.modules.users.handles import clean_name, free_handle
 from app.modules.users.models import User, UserStatus
+from app.modules.users.repository import UserRepository
 from app.modules.whatsapp import replies
 from app.modules.whatsapp.models import MessageType, WhatsAppMessage
 from app.modules.whatsapp.replies import Reply
@@ -81,8 +83,9 @@ def _notice_key(notice: str, user: User) -> str:
 
 
 def command_of(message: WhatsAppMessage) -> str | None:
-    """Typed text, trimmed, upper case, single spaces: "my  data " -> "MY DATA"."""
-    if message.message_type != MessageType.TEXT or not message.body:
+    """The text, trimmed, upper case, single spaces: "my  data " -> "MY DATA". A template's quick
+    reply button arrives with its title as the text, so it counts too."""
+    if message.message_type not in (MessageType.TEXT, MessageType.BUTTON) or not message.body:
         return None
     return " ".join(message.body.split()).upper()
 
@@ -101,16 +104,27 @@ def sent_at(message: WhatsAppMessage) -> datetime:
     return now if moment > now + MAX_CLOCK_AHEAD else moment
 
 
-async def find_or_create_customer(session: AsyncSession, phone_e164: str) -> User:
-    """The customer with this phone number, created if new. Two first messages arriving at
-    once still make one customer (the phone number is unique)."""
+async def find_or_create_customer(
+    session: AsyncSession, phone_e164: str, profile_name: str | None = None
+) -> User:
+    """The customer with this phone number, created if new with their WhatsApp profile name and
+    a handle made from it (riya.m4821). Two first messages arriving at once still make one
+    customer (the phone number is unique). A customer without a name gets one from a later
+    message; a name already set (perhaps changed on the website) is never overwritten."""
+    name = clean_name(profile_name)
     await session.execute(
         insert(User)
-        .values(phone_e164=phone_e164)
+        .values(
+            phone_e164=phone_e164,
+            name=name,
+            handle=await free_handle(name, taken=UserRepository(session).handle_exists),
+        )
         .on_conflict_do_nothing(index_elements=[User.phone_e164])
     )
     user = await session.scalar(select(User).where(User.phone_e164 == phone_e164))
     assert user is not None
+    if user.name is None and name is not None:
+        user.name = name
     return user
 
 
@@ -120,7 +134,9 @@ class WhatsAppBot:
         self.client = client
 
     async def __call__(self, session: AsyncSession, message: WhatsAppMessage) -> None:
-        user = await find_or_create_customer(session, message.phone_e164)
+        user = await find_or_create_customer(
+            session, message.phone_e164, (message.payload or {}).get("profile_name")
+        )
         message.user_id = user.id
         if user.status != UserStatus.ACTIVE or user.deleted_at is not None:
             logger.info(
@@ -162,7 +178,9 @@ class WhatsAppBot:
         if button == replies.PRIVACY.id:
             return [replies.privacy_notice()]
 
-        scan = parse_scan(message.body) if message.message_type == MessageType.TEXT else None
+        scan = parse(message.body) if message.message_type == MessageType.TEXT else None
+        if isinstance(scan, NoCode):
+            return [replies.no_code()]
         if scan is not None:
             result = await CheckInService(session, self.redis).scan(
                 user, scan, scanned_at=sent_at(message), whatsapp_message_id=message.id
@@ -212,6 +230,8 @@ class WhatsAppBot:
                 return [replies.welcome_consent()]
             case Outcome.VENUE_NOT_LIVE:
                 return [replies.venue_not_live(venue_name)]
+            case Outcome.DAILY_LIMIT:
+                return [replies.daily_limit()]
             case _:
                 return [replies.code_expired()]
 

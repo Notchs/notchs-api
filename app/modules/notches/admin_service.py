@@ -18,7 +18,8 @@ from app.modules.notches.exceptions import (
     NotchReviewNotFoundException,
     SignalNotFoundException,
 )
-from app.modules.notches.models import FraudSignal, Notch, NotchStatus, SignalStatus
+from app.modules.notches.models import FraudSignal, SignalStatus
+from app.modules.scans.models import Visit, VisitStatus
 from app.modules.users.models import User
 from app.modules.venues.models import Venue
 
@@ -35,27 +36,27 @@ class NotchReviewService:
         self,
         params: PaginationParams,
         *,
-        status: NotchStatus | None = NotchStatus.FLAGGED,
+        status: VisitStatus | None = VisitStatus.FLAGGED,
         venue_id: uuid.UUID | None = None,
     ) -> tuple[list[ReviewNotchOut], int]:
         """Flagged Notchs oldest first, so the queue is worked through in order (A / R keys)."""
         conditions = []
         if status is not None:
-            conditions.append(Notch.status == status)
+            conditions.append(Visit.status == status)
         if venue_id is not None:
-            conditions.append(Notch.venue_id == venue_id)
-        order = Notch.scanned_at.asc() if status == NotchStatus.FLAGGED else Notch.scanned_at.desc()
+            conditions.append(Visit.venue_id == venue_id)
+        order = Visit.visited_at.asc() if status == VisitStatus.FLAGGED else Visit.visited_at.desc()
         notches = (
             await self.session.scalars(
-                select(Notch)
+                select(Visit)
                 .where(*conditions)
-                .order_by(order, Notch.id)
+                .order_by(order, Visit.id)
                 .offset(params.offset)
                 .limit(params.size)
             )
         ).all()
         total = await self.session.scalar(
-            select(func.count()).select_from(Notch).where(*conditions)
+            select(func.count()).select_from(Visit).where(*conditions)
         )
         return await self._outs(notches), total or 0
 
@@ -66,13 +67,13 @@ class NotchReviewService:
         if notch.counter_id is not None:
             same = (
                 await self.session.scalars(
-                    select(Notch)
+                    select(Visit)
                     .where(
-                        Notch.counter_id == notch.counter_id,
-                        Notch.code_window == notch.code_window,
-                        Notch.id != notch.id,
+                        Visit.counter_id == notch.counter_id,
+                        Visit.code_slot == notch.code_slot,
+                        Visit.id != notch.id,
                     )
-                    .order_by(Notch.scanned_at)
+                    .order_by(Visit.visited_at)
                 )
             ).all()
         return ReviewNotchDetailOut(**out.model_dump(), same_code=await self._outs(same))
@@ -82,7 +83,7 @@ class NotchReviewService:
     ) -> ReviewNotchOut:
         notch = await self._notch(ref, for_update=True)
         before = notch.status
-        notch.status = NotchStatus.VERIFIED if approve else NotchStatus.REJECTED
+        notch.status = VisitStatus.VALID if approve else VisitStatus.REVOKED
         notch.reviewed_by_admin_id = admin.id
         notch.reviewed_at = datetime.now(UTC)
         notch.review_note = note
@@ -100,22 +101,22 @@ class NotchReviewService:
         (out,) = await self._outs([notch])
         return out
 
-    async def _notch(self, ref: str, *, for_update: bool = False) -> Notch:
+    async def _notch(self, ref: str, *, for_update: bool = False) -> Visit:
         ref = ref.strip().upper()
         if _NOTCH_CODE.fullmatch(ref):
-            condition = Notch.notch_code == ref
+            condition = Visit.notch_code == ref
         else:
             try:
-                condition = Notch.id == uuid.UUID(ref)
+                condition = Visit.id == uuid.UUID(ref)
             except ValueError as exc:
                 raise NotchReviewNotFoundException() from exc
-        query = select(Notch).where(condition)
+        query = select(Visit).where(condition)
         notch = await self.session.scalar(query.with_for_update() if for_update else query)
         if notch is None:
             raise NotchReviewNotFoundException()
         return notch
 
-    async def _outs(self, notches: Sequence[Notch]) -> list[ReviewNotchOut]:
+    async def _outs(self, notches: Sequence[Visit]) -> list[ReviewNotchOut]:
         if not notches:
             return []
         venues = {
@@ -181,11 +182,10 @@ class NotchReviewService:
                     venue_name=venue.name,
                     area=areas.get(n.area_id) if n.area_id else None,
                     customer_code=codes.get(n.user_id) if n.user_id else None,
-                    scanned_at=n.scanned_at,
-                    local_date=n.local_date,
-                    time=local(n.scanned_at, tz.get(venue.city_id)).strftime("%H:%M"),
+                    scanned_at=n.visited_at,
+                    local_date=n.visit_date,
+                    time=local(n.visited_at, tz.get(venue.city_id)).strftime("%H:%M"),
                     code=n.code,
-                    code_offset=n.code_offset,
                     notch_no=n.notch_no,
                     flags=list(n.flags),
                     flag_note=n.flag_note,
