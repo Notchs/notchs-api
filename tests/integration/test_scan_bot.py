@@ -15,13 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.clients.whatsapp import SendResult, WhatsAppSendError
 from app.core.config import settings
 from app.modules.auth.customer_auth import MAX_LINKS_PER_WINDOW, CustomerAuthService
+from app.modules.auth.models import AuthToken
 from app.modules.scans import replies, service, verifier
 from app.modules.scans.models import PointsEntry, RejectReason, ScanSession, Visit
 from app.modules.scans.service import MAX_PEOPLE_PER_CODE, MAX_VENUES_PER_DAY
 from app.modules.users.consent import CONSENT_VERSION, consent_text
 from app.modules.users.models import User, UserStatus
 from app.modules.venues.models import Venue, VenueStatus
-from app.modules.whatsapp.bot import CONSENT_BUTTON, WhatsAppBot
+from app.modules.whatsapp.bot import CONSENT_BUTTON, LOGIN_BUTTON, WhatsAppBot
 from app.modules.whatsapp.models import WhatsAppMessage
 from app.modules.whatsapp.processor import InboundProcessor
 from tests.integration.test_scan_pipeline import add_venue, phone, wrong_code
@@ -326,6 +327,66 @@ async def test_no_second_consent_question_once_agreed(db, bot_under_test, meta) 
 
     (text,) = meta.texts()
     assert "/login/verify" in text
+
+
+@pytest.mark.parametrize(
+    "tap", [{"body": "LOGIN"}, {"body": "Login link", "button_id": LOGIN_BUTTON.id}]
+)
+async def test_login_before_agreeing_asks_the_question_and_makes_no_link(
+    db, bot_under_test, meta, tap
+) -> None:
+    user = await add_customer(db, agreed=False)
+
+    await receive(db, bot_under_test, user.phone_e164, **tap)
+
+    assert meta.texts() == [consent_text()]
+    assert meta.buttons() == [CONSENT_BUTTON.id]
+    links = await db.scalar(
+        select(func.count()).select_from(AuthToken).where(AuthToken.user_id == user.id)
+    )
+    assert links == 0
+
+
+async def test_login_question_at_most_once_a_minute(db, bot_under_test, meta, redis) -> None:
+    user = await add_customer(db, agreed=False)
+
+    await receive(db, bot_under_test, user.phone_e164, "LOGIN")
+    await receive(db, bot_under_test, user.phone_e164, "LOGIN")
+    assert len(meta.sent) == 1
+
+    await redis.delete(f"wa:notice:consent:{user.id}")  # a minute later
+    await receive(db, bot_under_test, user.phone_e164, "LOGIN")
+    assert len(meta.sent) == 2
+
+
+async def test_login_then_agreeing_gives_a_working_link(
+    api: AsyncClient, db, bot_under_test, meta
+) -> None:
+    user = await add_customer(db, agreed=False)
+    await receive(db, bot_under_test, user.phone_e164, "LOGIN")
+
+    await receive(
+        db, bot_under_test, user.phone_e164, CONSENT_BUTTON.title, button_id=CONSENT_BUTTON.id
+    )
+
+    response = await api.post("/auth/customer/consume", json={"token": token_of(meta.texts()[-1])})
+    assert response.status_code == 200, response.text
+
+
+async def test_login_after_agreeing_gives_a_working_link(
+    api: AsyncClient, db, bot_under_test, meta
+) -> None:
+    user = await add_customer(db, agreed=False)
+    await receive(
+        db, bot_under_test, user.phone_e164, CONSENT_BUTTON.title, button_id=CONSENT_BUTTON.id
+    )
+    meta.sent.clear()
+
+    await receive(db, bot_under_test, user.phone_e164, "LOGIN")
+
+    (text,) = meta.texts()
+    response = await api.post("/auth/customer/consume", json={"token": token_of(text)})
+    assert response.status_code == 200, response.text
 
 
 # --- the sentence with no code --------------------------------------------------------------------

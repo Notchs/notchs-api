@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
@@ -18,8 +19,10 @@ from app.clients.whatsapp import SendResult
 from app.core.config import settings
 from app.main import app
 from app.modules.auth.customer_auth import MAX_LINKS_PER_WINDOW
+from app.modules.users.consent import CONSENT_VERSION, consent_text
 from app.modules.users.models import User, UserStatus
 from app.modules.whatsapp.bot import (
+    CONSENT_BUTTON,
     HELP_REPLY,
     LOGIN_BUTTON,
     TOO_MANY_LINKS_REPLY,
@@ -72,7 +75,12 @@ def phone() -> str:
 
 
 async def customer(db: AsyncSession, status: str = UserStatus.ACTIVE) -> User:
-    user = User(phone_e164=phone(), status=status)
+    user = User(
+        phone_e164=phone(),
+        status=status,
+        consent_at=datetime.now(UTC),
+        consent_version=CONSENT_VERSION,
+    )
     db.add(user)
     await db.commit()
     return user
@@ -293,7 +301,7 @@ async def test_login_still_works_right_after_help(
 # --- through the webhook ------------------------------------------------------------------------
 
 
-async def test_login_from_a_new_number_through_the_webhook(
+async def test_login_from_a_new_number_asks_for_consent_through_the_webhook(
     api: AsyncClient,
     db: AsyncSession,
     processor: InboundProcessor,
@@ -347,4 +355,5 @@ async def test_login_from_a_new_number_through_the_webhook(
     assert inbound is not None
     assert inbound.processed_at is not None and inbound.user_id == user.id
     (reply,) = await replies(db, sender)
-    assert "/login/verify?token=" in (reply.body or "")
+    assert reply.body == consent_text()
+    assert meta.buttons() == [(CONSENT_BUTTON.id, CONSENT_BUTTON.title)]

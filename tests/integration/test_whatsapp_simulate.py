@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.modules.admin_users.models import AdminRole
 from app.modules.users.models import User
-from app.modules.whatsapp.bot import HELP_REPLY, LOGIN_BUTTON
+from app.modules.whatsapp.bot import CONSENT_BUTTON, HELP_REPLY, LOGIN_BUTTON
 from app.modules.whatsapp.models import WhatsAppMessage
 from tests.integration.test_admin import make_admin
 
@@ -46,7 +46,16 @@ async def test_login_from_a_new_number(
     data = response.json()["data"]
     user = await db.scalar(select(User).where(User.phone_e164 == f"+91{local}"))
     assert user is not None and data["customer_id"] == str(user.id)
-    (reply,) = data["replies"]
+    (question,) = data["replies"]
+    assert question.endswith(f"[{CONSENT_BUTTON.title}]")
+    assert "/login/verify" not in question
+
+    agreed = await api.post(
+        "/dev/simulate-inbound", json={"phone": local, "button": CONSENT_BUTTON.id}, cookies=admin
+    )
+
+    assert agreed.status_code == 200, agreed.text
+    (reply,) = agreed.json()["data"]["replies"]
     link = reply.rsplit("\n", 1)[1]
     assert link.startswith(f"{settings.CUSTOMER_APP_URL}/login/verify?token=")
 
@@ -85,6 +94,9 @@ async def test_admins_only(api: AsyncClient, db: AsyncSession, redis: FakeAsyncR
 
 async def test_tapping_the_login_button(api: AsyncClient, admin: dict[str, str]) -> None:
     phone = f"+91{number()}"
+    await api.post(
+        "/dev/simulate-inbound", json={"phone": phone, "button": CONSENT_BUTTON.id}, cookies=admin
+    )
 
     response = await api.post(
         "/dev/simulate-inbound", json={"phone": phone, "button": LOGIN_BUTTON.id}, cookies=admin

@@ -316,14 +316,14 @@ What the bot replies:
 | Customer sends | Bot |
 |---|---|
 | Their first message | Creates the customer (the phone number is their identity) |
-| `LOGIN`, or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes) |
+| `LOGIN`, or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes). If they have not agreed yet, the consent question instead |
 | A scan: `Hey Notchs!, get me notched. KAHWA-482913` | Counts the visit: stamp, notch number, points and a login link. Or says why not (wrong or expired code, already notched today, daily limit); the same refusal at most once a minute |
 | The scan sentence with no code | No stamp, a login link |
 | Taps **I agree, I'm 18+** | Records the privacy consent and 18+ confirmation, replies with a login link |
 | Anything else | A short help message with a **🔑 Login link** button (at most once every 10 minutes) |
 
-Customers who have not agreed yet get the consent question instead of the link after a scan; the
-visit still counts. Blocked and deleted customers get no reply. With `WHATSAPP_DRY_RUN=true` replies, login links
+Customers who have not agreed yet never get a link, only the consent question; a scan's visit
+still counts. Blocked and deleted customers get no reply. With `WHATSAPP_DRY_RUN=true` replies, login links
 included, are written to the log instead of sent.
 
 ### Trying the bot without WhatsApp
@@ -334,6 +334,7 @@ Logged in as an admin (role `admin`), outside production:
 POST /api/v1/dev/simulate-inbound
 {"phone": "98765 43210", "text": "LOGIN"}
 {"phone": "98765 43210", "button": "login"}   # a tap on the 🔑 Login link button
+{"phone": "98765 43210", "button": "consent_agree"}   # a tap on I agree, I'm 18+ (a new number needs this before a link)
 ```
 
 The text goes through the same steps as a real WhatsApp message, and the response lists the

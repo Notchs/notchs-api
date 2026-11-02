@@ -8,8 +8,8 @@
     no code         the scan sentence from a QR away from a venue: no stamp, a login link
     anything else   a short help reply with that button, at most once every 10 minutes per customer
 
-Customers who have not agreed yet get the consent question instead of a link after a scan. A scan
-still counts first, because its code expires fast.
+Customers who have not agreed yet never get a link: they get the consent question instead, and
+the link when they tap. A scan still counts first, because its code expires fast.
 
 Blocked and deleted customers get no reply.
 
@@ -160,6 +160,12 @@ class WhatsAppBot:
             await sender.send_buttons(user.phone_e164, HELP_REPLY, [LOGIN_BUTTON], user_id=user.id)
 
     async def _login(self, session: AsyncSession, sender: WhatsAppSender, user: User) -> None:
+        if user.consent_at is None:
+            if await self._notice_allowed("consent", user, SCAN_NOTICE_EVERY_SECONDS):
+                await sender.send_buttons(
+                    user.phone_e164, consent_text(), [CONSENT_BUTTON], user_id=user.id
+                )
+            return
         try:
             link = await CustomerAuthService(session, self.redis).issue_login_link(user)
         except AuthRateLimitedException:
