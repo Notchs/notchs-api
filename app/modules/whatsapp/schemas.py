@@ -14,7 +14,8 @@ MAX_BUTTON_ID_LENGTH = 256  # WhatsApp's limit for a reply button id
 
 class SimulateInboundIn(BaseSchema):
     """Either a text the customer types, or a tap on one of the bot's buttons (its id, e.g.
-    `login` for the help reply's "Login link")."""
+    `login` for the help reply's "Login link"). A scan is a text with the venue's code and the
+    counter's live code, as on WhatsApp: "Hey Notchs!, get me notched. KAHWA-482913"."""
 
     phone: Phone = Field(examples=["+919876543210"])
     text: str | None = Field(

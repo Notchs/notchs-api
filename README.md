@@ -41,6 +41,8 @@ notchs-api/
 │       ├── dropdowns/          # GET /dropdowns/{name}: option lists for every form
 │       ├── health/
 │       ├── locations/          # Cities and areas (models only)
+│       ├── leaderboards/       # City ranks in Redis, rebuilt from the points ledger
+│       ├── tags/               # Tags (admins only), venue tags and items, "What did you try?"
 │       ├── users/              # Customers (model only)
 │       ├── venue_applications/ # "Apply as a venue" form + admin review (approve/reject)
 │       ├── venues/             # Venues, venue members, counter phone pairing and display
@@ -172,6 +174,13 @@ Rules for the shared DB:
 
 Add a row here when a new table gets a code. A prefix is never reused or changed.
 
+**Venue scan codes** are different: `venues.scan_code` (e.g. `KAHWA`) is what customers send to
+get notched. It is made from the venue's name when the venue is created (`KAHWA`, then `KAHWA2`...),
+3–10 capital letters and digits starting with a letter, unique, and an admin may change it. The
+counter phone's QR opens WhatsApp with **"Hey Notchs!, get me notched. KAHWA-482913"**, where
+`482913` is the live code it shows. `GET /api/v1/display/config` returns `scan.link_template`: replace
+`{code}` with the live code and draw it as a QR.
+
 ## Redis
 
 Redis holds rate limits, one-time codes, leaderboards and the job queue. Unlike Postgres it is
@@ -206,6 +215,8 @@ production refuse to start until the real values are set.
 | `WHATSAPP_API_VERSION` | Meta Graph API version, e.g. `v23.0`. |
 | `WHATSAPP_APP_SECRET` | Meta app secret (App settings → Basic). Checks the signature on every webhook call; without it, all are refused. Required in production. |
 | `WHATSAPP_VERIFY_TOKEN` | Any random string; also entered in Meta's webhook form. Required in production. |
+| `WHATSAPP_PUBLIC_NUMBER` | The number customers message, digits with the country code (e.g. `15556755530`, the test number). Counter phones put it in their scan QR. Required in production. |
+| `WHATSAPP_STAMP_IMAGE_URL` | Optional public https image sent with a stamp. Unset: the stamp is a text message. |
 | `WHATSAPP_SWEEP_INTERVAL_SECONDS` | How often the API retries incoming messages left unhandled (default `60`; `0` turns it off). |
 
 ### Sessions (for the frontends)
@@ -307,10 +318,15 @@ What the bot replies:
 | Customer sends | Bot |
 |---|---|
 | Their first message | Creates the customer (the phone number is their identity) |
-| `LOGIN`, or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes) |
+| `LOGIN`, or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes). If they have not agreed yet, the consent question instead |
+| A scan: `Hey Notchs!, get me notched. KAHWA-482913` | Counts the visit: stamp, notch number, points and a login link. Or says why not (wrong or expired code, already notched today, daily limit); the same refusal at most once a minute |
+| The scan sentence with no code | No stamp, a login link |
+| Taps **I agree, I'm 18+** | Records the privacy consent and 18+ confirmation, replies with a login link |
+| Picks from the **What did you try?** menu (sent after a stamp, once they have agreed, if the venue has items) | Saves the answer for that visit, up to 24 hours later. Several answers are fine. No points |
 | Anything else | A short help message with a **🔑 Login link** button (at most once every 10 minutes) |
 
-Blocked and deleted customers get no reply. With `WHATSAPP_DRY_RUN=true` replies, login links
+Customers who have not agreed yet never get a link, only the consent question; a scan's visit
+still counts. Blocked and deleted customers get no reply. With `WHATSAPP_DRY_RUN=true` replies, login links
 included, are written to the log instead of sent.
 
 ### Trying the bot without WhatsApp
@@ -321,11 +337,45 @@ Logged in as an admin (role `admin`), outside production:
 POST /api/v1/dev/simulate-inbound
 {"phone": "98765 43210", "text": "LOGIN"}
 {"phone": "98765 43210", "button": "login"}   # a tap on the 🔑 Login link button
+{"phone": "98765 43210", "text": "Hey Notchs!, get me notched. KAHWA-482913"}   # a scan: needs the counter's real live code
+{"phone": "98765 43210", "button": "consent_agree"}   # a tap on I agree, I'm 18+ (a new number needs this before a link)
 ```
 
 The text goes through the same steps as a real WhatsApp message, and the response lists the
 bot's replies (`data.replies`, buttons shown as `[title]` lines), login links included.
 Nothing is sent to Meta.
+
+## Leaderboards
+
+Ranks live in Redis per city, this month (India time) and all time, and points go on the board of
+the city the visit happened in. Postgres (`points_ledger`) is the truth: boards are rebuilt from it
+at startup and every `LEADERBOARD_REBUILD_INTERVAL_SECONDS`, so an emptied Redis repairs itself. To
+do it now: `python -m app.cli rebuild-leaderboards`.
+
+Everyone with points is ranked and equal points share a rank. Customers are private by default: they
+keep their place, but their row has no name or handle until they choose to be public.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /leaderboards?city_id=&period=month&limit=50` | Public | `period` is `month` or `all`; `limit` up to 100; 60 calls a minute per IP |
+| `GET /leaderboards/me` | Logged-in customer | Their rank and points in their home city, and `is_public` |
+| `PATCH /leaderboards/me` | Logged-in customer | `{is_public}`: show or hide their name |
+
+## Tags
+
+One shared list, and only admins change it. Kinds: `cuisine`, `vibe`, `activity`, `item`. There is
+no starter list, so venues have nothing to pick until an admin adds tags.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /admin/tags`, `GET /admin/tags/{id}` | Admin or reviewer | `?kind=item` filters; paginated |
+| `POST /admin/tags` | Admin | `{name, kind}`. The slug comes from the name; a taken one is `409 tags.name_taken` |
+| `PATCH /admin/tags/{id}` | Admin | `{name?, kind?}`. The kind cannot change once in use (`409 tags.kind_locked`) |
+| `DELETE /admin/tags/{id}` | Admin | Also takes it off venues' lists. Refused once a customer has picked it (`409 tags.in_use`) |
+| `GET`, `PUT /venue/tags` | Venue owner | `{tag_ids}`: what the place is. At most 5, any kind but `item` |
+| `GET`, `PUT /venue/items` | Venue owner | `{tag_ids}` in menu order: the bot's "What did you try?" menu. At most 10, kind `item` only |
+
+Pickers get their options from `GET /api/v1/dropdowns/tags?kind=item`.
 
 ## Dropdowns
 

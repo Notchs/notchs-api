@@ -120,7 +120,12 @@ def _inbound(
         body=body if isinstance(body, str) else None,
         button_id=button_id if isinstance(button_id, str) else None,
         profile_name=names.get(sender) if isinstance(names.get(sender), str) else None,
-        raw={"message": raw, "metadata": value.get("metadata")},
+        raw={
+            "message": raw,
+            "metadata": value.get("metadata"),
+            # The sender's WhatsApp profile name: the bot uses it as a new customer's name.
+            "profile_name": names.get(sender) if isinstance(names.get(sender), str) else None,
+        },
     )
 
 

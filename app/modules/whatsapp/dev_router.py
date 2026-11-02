@@ -2,7 +2,7 @@
 
 `POST /dev/simulate-inbound` sends a text, or a tap on one of the bot's buttons, through the
 same path as a real message (parsed, stored, handled by the bot) and returns the bot's replies,
-login links included. Nothing goes
+login links included. A scan needs the real live code, like any other. Nothing goes
 to Meta, whatever WHATSAPP_DRY_RUN says. Admins (role `admin`) only, because a reply can hold
 a working login link for the customer with that number.
 """
@@ -68,6 +68,10 @@ def _text_of(payload: dict[str, Any]) -> str:
     """The reply as the customer would read it; buttons shown as `[title]` lines."""
     if payload["type"] == "interactive":
         interactive = payload["interactive"]
+        if interactive["type"] == "list":  # with the id to send back as `button`
+            rows = interactive["action"]["sections"][0]["rows"]
+            lines = [f"[{row['title']}] {row['id']}" for row in rows]
+            return "\n".join([interactive["body"]["text"], *lines])
         titles = [b["reply"]["title"] for b in interactive["action"]["buttons"]]
         return "\n".join([interactive["body"]["text"], *(f"[{t}]" for t in titles)])
     return payload["text"]["body"]

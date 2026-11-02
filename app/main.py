@@ -13,8 +13,9 @@ from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.redis import check_redis, redis_client
-from app.db.session import check_connection, engine
+from app.db.session import AsyncSessionLocal, check_connection, engine
 from app.middleware.request_context import RequestContextMiddleware
+from app.modules.leaderboards.service import run_rebuilder
 from app.modules.whatsapp.processor import get_inbound_processor, run_sweeper
 
 logger = get_logger(__name__)
@@ -56,11 +57,20 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             run_sweeper(get_inbound_processor(), settings.WHATSAPP_SWEEP_INTERVAL_SECONDS),
             name="whatsapp-sweeper",
         )
+    rebuilder = None
+    if settings.LEADERBOARD_REBUILD_INTERVAL_SECONDS > 0:
+        rebuilder = asyncio.create_task(
+            run_rebuilder(
+                AsyncSessionLocal, redis_client, settings.LEADERBOARD_REBUILD_INTERVAL_SECONDS
+            ),
+            name="leaderboard-rebuilder",
+        )
     yield
-    if sweeper is not None:
-        sweeper.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await sweeper
+    for task in (sweeper, rebuilder):
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
     await redis_client.aclose()
     await engine.dispose()
     logger.info("Shutdown complete")

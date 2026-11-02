@@ -8,6 +8,7 @@ from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, 
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Entity, in_values
+from app.modules.users.handles import HANDLE_REGEX, random_handle
 
 MAX_FOUNDING_MEMBER_NO = 500
 
@@ -32,14 +33,17 @@ class User(Entity):
         ),
         CheckConstraint(in_values("theme", UserTheme), name="theme_valid"),
         CheckConstraint(in_values("status", UserStatus), name="status_valid"),
+        CheckConstraint(f"handle ~ '{HANDLE_REGEX}'", name="handle_format"),
     )
 
     # Login identity, e.g. +919876543210. Never shown to venues.
     phone_e164: Mapped[str] = mapped_column(String(16), unique=True)
-    # Asked the first time the passport opens. Shown on the Notch Card.
+    # From the WhatsApp profile name on the first message; shown on the leaderboard and the
+    # Notch Card. Not unique. Customers may change it on the website.
     name: Mapped[str | None] = mapped_column(String(60))
-    # Only asked when the user goes public.
-    handle: Mapped[str | None] = mapped_column(String(30), unique=True)
+    # Unique, made automatically from the name: riya.m4821 (users/handles.py). Customers may
+    # change it later. The random default only applies to rows made outside the bot.
+    handle: Mapped[str] = mapped_column(String(30), unique=True, default=lambda: random_handle())
     # Home city, set from the first scanned venue.
     city_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("cities.id", ondelete="SET NULL"), index=True
