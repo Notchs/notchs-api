@@ -15,11 +15,23 @@ MAX_BUTTON_BODY_LENGTH = 1024
 MAX_BUTTONS = 3
 MAX_BUTTON_TITLE_LENGTH = 20
 MAX_BUTTON_ID_LENGTH = 256
+MAX_LIST_ROWS = 10
+MAX_LIST_ROW_TITLE_LENGTH = 24
+MAX_LIST_ROW_ID_LENGTH = 200
+MAX_LIST_BUTTON_LENGTH = 20
 
 
 @dataclass(frozen=True, slots=True)
 class ReplyButton:
     """A tap-to-reply button. `id` comes back in the webhook when the customer taps it."""
+
+    id: str
+    title: str
+
+
+@dataclass(frozen=True, slots=True)
+class ListRow:
+    """One choice in a list menu. `id` comes back in the webhook when the customer taps it."""
 
     id: str
     title: str
@@ -86,6 +98,34 @@ def buttons_message(phone_e164: str, body: str, buttons: list[ReplyButton]) -> d
                 "buttons": [
                     {"type": "reply", "reply": {"id": b.id, "title": b.title}} for b in buttons
                 ]
+            },
+        },
+    }
+
+
+def list_message(phone_e164: str, body: str, button: str, rows: list[ListRow]) -> dict[str, Any]:
+    """A menu: `button` opens it, and each tap sends one row back."""
+    if not body.strip() or len(body) > MAX_BUTTON_BODY_LENGTH:
+        raise ValueError(f"List message bodies need 1 to {MAX_BUTTON_BODY_LENGTH} characters")
+    if not button.strip() or len(button) > MAX_LIST_BUTTON_LENGTH:
+        raise ValueError(f"List buttons need 1 to {MAX_LIST_BUTTON_LENGTH} characters")
+    if not 1 <= len(rows) <= MAX_LIST_ROWS:
+        raise ValueError(f"Use 1 to {MAX_LIST_ROWS} rows")
+    for row in rows:
+        if not row.title.strip() or len(row.title) > MAX_LIST_ROW_TITLE_LENGTH:
+            raise ValueError(f"Row titles need 1 to {MAX_LIST_ROW_TITLE_LENGTH} characters")
+        if not row.id or len(row.id) > MAX_LIST_ROW_ID_LENGTH:
+            raise ValueError(f"Row ids need 1 to {MAX_LIST_ROW_ID_LENGTH} characters")
+    if len({row.id for row in rows}) < len(rows):
+        raise ValueError("Row ids must be unique")
+    return _base(phone_e164) | {
+        "type": "interactive",
+        "interactive": {
+            "type": "list",
+            "body": {"text": body},
+            "action": {
+                "button": button,
+                "sections": [{"rows": [{"id": r.id, "title": r.title} for r in rows]}],
             },
         },
     }

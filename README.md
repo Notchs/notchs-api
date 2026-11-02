@@ -41,6 +41,7 @@ notchs-api/
 │       ├── dropdowns/          # GET /dropdowns/{name}: option lists for every form
 │       ├── health/
 │       ├── locations/          # Cities and areas (models only)
+│       ├── tags/               # Tags (admins only), venue tags and items, "What did you try?"
 │       ├── users/              # Customers (model only)
 │       ├── venue_applications/ # "Apply as a venue" form + admin review (approve/reject)
 │       ├── venues/             # Venues, venue members, counter phone pairing and display
@@ -320,6 +321,7 @@ What the bot replies:
 | A scan: `Hey Notchs!, get me notched. KAHWA-482913` | Counts the visit: stamp, notch number, points and a login link. Or says why not (wrong or expired code, already notched today, daily limit); the same refusal at most once a minute |
 | The scan sentence with no code | No stamp, a login link |
 | Taps **I agree, I'm 18+** | Records the privacy consent and 18+ confirmation, replies with a login link |
+| Picks from the **What did you try?** menu (sent after a stamp, once they have agreed, if the venue has items) | Saves the answer for that visit, up to 24 hours later. Several answers are fine. No points |
 | Anything else | A short help message with a **🔑 Login link** button (at most once every 10 minutes) |
 
 Customers who have not agreed yet never get a link, only the consent question; a scan's visit
@@ -340,6 +342,22 @@ POST /api/v1/dev/simulate-inbound
 The text goes through the same steps as a real WhatsApp message, and the response lists the
 bot's replies (`data.replies`, buttons shown as `[title]` lines), login links included.
 Nothing is sent to Meta.
+
+## Tags
+
+One shared list, and only admins change it. Kinds: `cuisine`, `vibe`, `activity`, `item`. There is
+no starter list, so venues have nothing to pick until an admin adds tags.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /admin/tags`, `GET /admin/tags/{id}` | Admin or reviewer | `?kind=item` filters; paginated |
+| `POST /admin/tags` | Admin | `{name, kind}`. The slug comes from the name; a taken one is `409 tags.name_taken` |
+| `PATCH /admin/tags/{id}` | Admin | `{name?, kind?}`. The kind cannot change once in use (`409 tags.kind_locked`) |
+| `DELETE /admin/tags/{id}` | Admin | Also takes it off venues' lists. Refused once a customer has picked it (`409 tags.in_use`) |
+| `GET`, `PUT /venue/tags` | Venue owner | `{tag_ids}`: what the place is. At most 5, any kind but `item` |
+| `GET`, `PUT /venue/items` | Venue owner | `{tag_ids}` in menu order: the bot's "What did you try?" menu. At most 10, kind `item` only |
+
+Pickers get their options from `GET /api/v1/dropdowns/tags?kind=item`.
 
 ## Dropdowns
 

@@ -68,6 +68,10 @@ def _text_of(payload: dict[str, Any]) -> str:
     """The reply as the customer would read it; buttons shown as `[title]` lines."""
     if payload["type"] == "interactive":
         interactive = payload["interactive"]
+        if interactive["type"] == "list":  # with the id to send back as `button`
+            rows = interactive["action"]["sections"][0]["rows"]
+            lines = [f"[{row['title']}] {row['id']}" for row in rows]
+            return "\n".join([interactive["body"]["text"], *lines])
         titles = [b["reply"]["title"] for b in interactive["action"]["buttons"]]
         return "\n".join([interactive["body"]["text"], *(f"[{t}]" for t in titles)])
     return payload["text"]["body"]

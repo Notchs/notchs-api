@@ -5,11 +5,13 @@
                     tap on the help reply's "Login link" button
     "I agree" tap   record the privacy consent and 18+ confirmation, reply with a login link
     a scan          count the visit or refuse it (scans module), then reply; "KAHWA-482913"
+    menu tap        save what they tried, for 24 hours after the visit; no points
     no code         the scan sentence from a QR away from a venue: no stamp, a login link
     anything else   a short help reply with that button, at most once every 10 minutes per customer
 
 Customers who have not agreed yet never get a link: they get the consent question instead, and
-the link when they tap. A scan still counts first, because its code expires fast.
+the link when they tap. A scan still counts first, because its code expires fast. They get the
+"What did you try?" menu only once they have agreed.
 
 Blocked and deleted customers get no reply.
 
@@ -22,6 +24,8 @@ replies twice, and scanning again answers "already notched today".
 All replies answer the customer's own message, so they fall inside WhatsApp's free 24-hour window.
 """
 
+import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from redis.asyncio import Redis
@@ -41,13 +45,16 @@ from app.modules.auth.tokens import lifetime
 from app.modules.scans import replies
 from app.modules.scans.parser import NoCode, Scan, parse
 from app.modules.scans.service import ScanResult, ScanService
+from app.modules.tags.models import Tag
+from app.modules.tags.repository import TagRepository
+from app.modules.tags.service import TagService, TriedOutcome
 from app.modules.users.consent import CONSENT_VERSION, consent_text
 from app.modules.users.handles import clean_name, free_handle
 from app.modules.users.models import User, UserStatus
 from app.modules.users.repository import UserRepository
 from app.modules.venues.models import Venue
 from app.modules.whatsapp.models import MessageType, WhatsAppMessage
-from app.modules.whatsapp.payloads import ReplyButton
+from app.modules.whatsapp.payloads import MAX_LIST_ROW_TITLE_LENGTH, ListRow, ReplyButton
 from app.modules.whatsapp.sender import WhatsAppSender
 from app.modules.whatsapp.webhook import button_id_of
 
@@ -78,10 +85,42 @@ CONSENT_BUTTON = ReplyButton(id="consent_agree", title="I agree, I'm 18+")
 CONSENT_THANKS = "Thanks!"
 # The same refused-scan or no-code reply at most once a minute per customer.
 SCAN_NOTICE_EVERY_SECONDS = 60
+# A menu row's id: try:<visit id>:<tag id>, so tapping an old menu updates the right visit.
+TRY_ROW_PREFIX = "try"
 
 
 def _notice_key(notice: str, user: User) -> str:
     return f"wa:notice:{notice}:{user.id}"
+
+
+def try_row_id(visit_id: uuid.UUID, tag_id: uuid.UUID) -> str:
+    return f"{TRY_ROW_PREFIX}:{visit_id}:{tag_id}"
+
+
+def try_rows(visit_id: uuid.UUID, items: Sequence[Tag]) -> list[ListRow]:
+    """Tag names can be longer than WhatsApp allows in a menu row."""
+    limit = MAX_LIST_ROW_TITLE_LENGTH
+    return [
+        ListRow(
+            id=try_row_id(visit_id, tag.id),
+            title=tag.name if len(tag.name) <= limit else f"{tag.name[: limit - 1]}…",
+        )
+        for tag in items
+    ]
+
+
+def parse_try_row(message: WhatsAppMessage) -> tuple[uuid.UUID, uuid.UUID] | None:
+    """(visit id, tag id) if this is a tap on the menu."""
+    if message.message_type != MessageType.BUTTON:
+        return None
+    prefix, _, ids = (button_id_of(message.payload) or "").partition(":")
+    visit_id, _, tag_id = ids.partition(":")
+    if prefix != TRY_ROW_PREFIX:
+        return None
+    try:
+        return uuid.UUID(visit_id), uuid.UUID(tag_id)
+    except ValueError:
+        return None
 
 
 def is_consent(message: WhatsAppMessage) -> bool:
@@ -150,6 +189,10 @@ class WhatsAppBot:
             return
         if is_consent(message):
             await self._consent(session, sender, user)
+            return
+        tried = parse_try_row(message)
+        if tried is not None:
+            await self._tried(session, sender, user, *tried)
             return
         scan = parse(message.body) if message.message_type == MessageType.TEXT else None
         if isinstance(scan, Scan):
@@ -222,6 +265,40 @@ class WhatsAppBot:
             await sender.send_buttons(
                 user.phone_e164, consent_text(), [CONSENT_BUTTON], user_id=user.id
             )
+            return
+        items = await TagRepository(session).venue_items(venue.id)
+        if items:
+            await sender.send_list(
+                user.phone_e164,
+                replies.TRY_QUESTION,
+                replies.TRY_BUTTON,
+                try_rows(result.visit.id, items),
+                user_id=user.id,
+            )
+
+    async def _tried(
+        self,
+        session: AsyncSession,
+        sender: WhatsAppSender,
+        user: User,
+        visit_id: uuid.UUID,
+        tag_id: uuid.UUID,
+    ) -> None:
+        result = await TagService(session).record_tried(user, visit_id, tag_id)
+        match result.outcome:
+            case TriedOutcome.SAVED:
+                assert result.tag is not None
+                text = replies.tried_text(result.tag.name)
+            case TriedOutcome.ALREADY_SAVED:  # a double tap: already answered
+                return
+            case TriedOutcome.NOT_ON_MENU:
+                text = replies.TRY_NOT_ON_MENU
+            case TriedOutcome.VISIT_CLOSED:
+                text = replies.TRY_VISIT_CLOSED
+        if result.outcome == TriedOutcome.SAVED or await self._notice_allowed(
+            f"try_{result.outcome.value}", user, SCAN_NOTICE_EVERY_SECONDS
+        ):
+            await sender.send_text(user.phone_e164, text, user_id=user.id)
 
     async def _no_code(self, session: AsyncSession, sender: WhatsAppSender, user: User) -> None:
         if not await self._notice_allowed("no_code", user, SCAN_NOTICE_EVERY_SECONDS):

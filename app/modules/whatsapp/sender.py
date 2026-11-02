@@ -20,7 +20,7 @@ from app.modules.whatsapp.models import (
     MessageType,
     WhatsAppMessage,
 )
-from app.modules.whatsapp.payloads import ReplyButton
+from app.modules.whatsapp.payloads import ListRow, ReplyButton
 
 logger = get_logger(__name__)
 
@@ -58,6 +58,18 @@ class WhatsAppSender:
         user_id: uuid.UUID | None = None,
     ) -> WhatsAppMessage:
         payload = payloads.buttons_message(phone_e164, body, buttons)
+        return await self._send(phone_e164, payload, MessageType.BUTTON, body, user_id)
+
+    async def send_list(
+        self,
+        phone_e164: str,
+        body: str,
+        button: str,
+        rows: list[ListRow],
+        *,
+        user_id: uuid.UUID | None = None,
+    ) -> WhatsAppMessage:
+        payload = payloads.list_message(phone_e164, body, button, rows)
         return await self._send(phone_e164, payload, MessageType.BUTTON, body, user_id)
 
     async def _send(

@@ -9,6 +9,10 @@ LINK_MINUTES = int(lifetime(TokenType.MAGIC_LINK).total_seconds() // 60)
 _LINK_LINE = f"It works once and expires in {LINK_MINUTES} minutes:\n{{link}}"
 
 SCAN_AT_VENUE = "Scan the QR at a venue to get stamped."
+TRY_QUESTION = "What did you try? You can pick more than one."
+TRY_BUTTON = "Choose"
+TRY_VISIT_CLOSED = "This visit is closed."
+TRY_NOT_ON_MENU = "That isn't on this venue's menu any more."
 
 
 def stamp_text(venue_name: str, notch_no: int, points: int, link: str | None) -> str:
@@ -17,6 +21,10 @@ def stamp_text(venue_name: str, notch_no: int, points: int, link: str | None) ->
     if link is None:
         return f"{stamp}\n\nSend LOGIN to see your rank in your city."
     return f"{stamp}\n\nNow you can see your rank in your city. {_LINK_LINE.format(link=link)}"
+
+
+def tried_text(tag_name: str) -> str:
+    return f"Got it: {tag_name}."
 
 
 def no_code_text(link: str | None) -> str:
