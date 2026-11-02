@@ -1,4 +1,6 @@
 import json
+import smtplib
+from typing import ClassVar
 
 import httpx
 import pytest
@@ -29,6 +31,82 @@ async def test_dry_run_sends_nothing(caplog: pytest.LogCaptureFixture) -> None:
     await EmailClient(_http(httpx.MockTransport(fail))).send(MESSAGE)
 
     assert "123456" in caplog.text
+
+
+class FakeSmtp:
+    """Stands in for smtplib.SMTP: keeps what would have been sent."""
+
+    sent: ClassVar[list] = []
+    connected_to: tuple = ()
+
+    def __init__(self, host: str, port: int, timeout: float) -> None:
+        FakeSmtp.connected_to = (host, port)
+
+    def __enter__(self) -> FakeSmtp:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def send_message(self, message) -> None:
+        FakeSmtp.sent.append(message)
+
+
+@pytest.fixture
+def smtp_email(monkeypatch: pytest.MonkeyPatch) -> type[FakeSmtp]:
+    monkeypatch.setattr(settings, "EMAIL_DRY_RUN", False)
+    monkeypatch.setattr(settings, "RESEND_API_KEY", None)
+    monkeypatch.setattr(settings, "SMTP_HOST", "mailpit")
+    monkeypatch.setattr(settings, "SMTP_PORT", 1025)
+    monkeypatch.setattr(smtplib, "SMTP", FakeSmtp)
+    FakeSmtp.sent = []
+    return FakeSmtp
+
+
+async def test_smtp_sends_there_and_not_to_resend(smtp_email: type[FakeSmtp]) -> None:
+    def fail(_: httpx.Request) -> httpx.Response:
+        raise AssertionError("SMTP must not call Resend")
+
+    await EmailClient(_http(httpx.MockTransport(fail))).send(MESSAGE)
+
+    assert smtp_email.connected_to == ("mailpit", 1025)
+    (sent,) = smtp_email.sent
+    assert (sent["To"], sent["Subject"]) == (MESSAGE.to, MESSAGE.subject)
+    assert sent["From"] == settings.EMAIL_FROM
+    assert "123456" in sent.get_content()
+
+
+async def test_smtp_keeps_the_html_part(smtp_email: type[FakeSmtp]) -> None:
+    html = EmailMessage(to="owner@kahwa.in", subject="Hi", text="Plain", html="<b>Rich</b>")
+
+    await EmailClient().send(html)
+
+    (sent,) = smtp_email.sent
+    assert "Rich" in sent.get_body(("html",)).get_content()
+    assert "Plain" in sent.get_body(("plain",)).get_content()
+
+
+@pytest.mark.parametrize("error", [OSError("down"), smtplib.SMTPException("refused")])
+async def test_smtp_failures_are_send_errors(
+    smtp_email: type[FakeSmtp], monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    def fails(*_: object) -> None:
+        raise error
+
+    monkeypatch.setattr(FakeSmtp, "send_message", fails)
+
+    with pytest.raises(EmailSendError, match="SMTP"):
+        await EmailClient().send(MESSAGE)
+
+
+async def test_dry_run_wins_over_smtp(
+    smtp_email: type[FakeSmtp], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "EMAIL_DRY_RUN", True)
+
+    await EmailClient().send(MESSAGE)
+
+    assert smtp_email.sent == []
 
 
 async def test_sends_through_resend(live_email: None) -> None:

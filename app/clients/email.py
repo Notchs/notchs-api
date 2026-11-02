@@ -2,9 +2,15 @@
 
 With EMAIL_DRY_RUN=true (the default for local work) nothing is sent: the email is written to
 the log instead, including any code or link in it.
+
+With SMTP_HOST set (local and development only) emails go to that server instead of Resend. It is
+for Mailpit (docker-compose.yml), which keeps them in a web inbox and delivers nothing.
 """
 
+import asyncio
+import smtplib
 from dataclasses import dataclass
+from email.message import EmailMessage as MimeMessage
 
 import httpx
 
@@ -26,7 +32,7 @@ class EmailMessage:
 
 
 class EmailSendError(Exception):
-    """Resend refused the email or could not be reached."""
+    """Resend or the SMTP server refused the email or could not be reached."""
 
 
 class EmailClient:
@@ -40,6 +46,10 @@ class EmailClient:
             logger.info(
                 "EMAIL (dry run) to=%s subject=%r\n%s", message.to, message.subject, message.text
             )
+            return
+        if settings.SMTP_HOST:
+            await asyncio.to_thread(_send_smtp, message)
+            logger.info("Email sent to %s through SMTP (%s)", message.to, message.subject)
             return
         if settings.RESEND_API_KEY is None:
             raise EmailSendError("RESEND_API_KEY is not set")
@@ -67,6 +77,21 @@ class EmailClient:
             # The body names the problem (bad key, unverified domain, ...) without the content.
             raise EmailSendError(f"Resend returned {response.status_code}: {response.text}")
         logger.info("Email sent to %s (%s)", message.to, message.subject)
+
+
+def _send_smtp(message: EmailMessage) -> None:
+    mime = MimeMessage()
+    mime["From"] = settings.EMAIL_FROM
+    mime["To"] = message.to
+    mime["Subject"] = message.subject
+    mime.set_content(message.text)
+    if message.html is not None:
+        mime.add_alternative(message.html, subtype="html")
+    try:
+        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=TIMEOUT_SECONDS) as smtp:
+            smtp.send_message(mime)
+    except (OSError, smtplib.SMTPException) as exc:
+        raise EmailSendError(f"Could not send through SMTP: {exc}") from exc
 
 
 def get_email_client() -> EmailClient:
