@@ -1,18 +1,28 @@
-"""What the bot does with one incoming WhatsApp message.
+"""What the bot does with one incoming WhatsApp message (Core Loop B1-B10).
 
-    every message   find the customer by phone, or create them (their first message is sign-up)
-    LOGIN           reply with a single-use passport login link (3 per 15 minutes); typed, or a
-                    tap on the help reply's "Login link" button
-    anything else   a short help reply with that button, at most once every 10 minutes per customer
-
-Blocked and deleted customers get no reply. Check-in codes (`NOTCH KAHWA 482913`) get the help
-reply for now; stamping comes with the check-ins module.
+    every message      find the customer by phone, or create them (their first message is
+                       sign-up). Blocked and deleted customers get no reply.
+    counter scan       "Notch me at Kahwa House · 482913 [VEN-7K3M9QX2]" (notches/codes.py):
+                       Notched (B2), already today (B3), expired (B4); the first ever scan asks
+                       for consent first (B1). Then Founding Member (B8, once) and new badges (B6).
+    I agree            records 18+ and privacy consent, then notches the scan that was waiting
+    Privacy notice     the privacy page link
+    LOGIN, My passport, See badges, See my card
+                       a single-use passport login link (3 per 15 minutes), landing on the page
+                       the button names
+    HELP               what the bot understands (B9)
+    DELETE, then YES   closes the account; a job wipes the data within a minute (B9)
+    MY DATA            a login link to the passport's data page, where the download is (B9)
+    anything else      "I only understand scans" (B10), at most once every 10 minutes
 
 The processor calls the bot inside a transaction that holds a lock on the message, and marks the
 message done afterwards. If the bot raises, nothing is kept and the message is retried, so any
-reply sent before the error could be sent again: sending a reply is the last thing it does.
+reply sent before the error could be sent again: sending replies is the last thing it does.
 All replies answer the customer's own message, so they fall inside WhatsApp's free 24-hour window.
 """
+
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from redis.asyncio import Redis
 from sqlalchemy import select
@@ -26,50 +36,69 @@ from app.modules.auth.customer_auth import LINK_WINDOW_SECONDS, CustomerAuthServ
 from app.modules.auth.enums import TokenType
 from app.modules.auth.exceptions import AuthRateLimitedException, TokenInvalidException
 from app.modules.auth.tokens import lifetime
+from app.modules.notches.checkin import CheckInResult, CheckInService, Outcome
+from app.modules.notches.codes import parse_scan
+from app.modules.users.consent import record_privacy_consent
+from app.modules.users.deletion import DeletionService
 from app.modules.users.models import User, UserStatus
+from app.modules.whatsapp import replies
 from app.modules.whatsapp.models import MessageType, WhatsAppMessage
-from app.modules.whatsapp.payloads import ReplyButton
+from app.modules.whatsapp.replies import Reply
 from app.modules.whatsapp.sender import WhatsAppSender
 from app.modules.whatsapp.webhook import button_id_of
 
 logger = get_logger(__name__)
 
 LOGIN_COMMAND = "LOGIN"
-# Help and "too many links" replies: each at most once per customer per window, so nobody is
-# flooded. Separate windows: a help reply never silences the "too many links" answer.
+HELP_COMMAND = "HELP"
+DELETE_COMMAND = "DELETE"
+YES_COMMAND = "YES"
+MY_DATA_COMMAND = "MY DATA"
+AGREE_COMMANDS = frozenset({"I AGREE", "AGREE"})
+
+# Buttons that answer with a login link, and the passport page each one lands on.
+LINK_BUTTONS: dict[str, str | None] = {
+    replies.LOGIN.id: None,
+    replies.PASSPORT.id: None,
+    replies.SEE_BADGES.id: "/badges",
+    replies.SEE_CARD.id: "/cards/latest",
+}
+MY_DATA_PATH = "/me/privacy"
+
+# "Anything else" and "too many links" replies: each at most once per customer per window, so
+# nobody is flooded. Separate windows: one never silences the other.
 NOTICE_EVERY_SECONDS = 10 * 60
-HELP_NOTICE = "help"
+NOT_UNDERSTOOD_NOTICE = "help"
 TOO_MANY_LINKS_NOTICE = "too_many_links"
 
 LINK_MINUTES = int(lifetime(TokenType.MAGIC_LINK).total_seconds() // 60)
-LOGIN_REPLY = (
-    "Here is your Notchs passport login link. It works once and expires in "
-    f"{LINK_MINUTES} minutes:\n{{link}}"
-)
-TOO_MANY_LINKS_REPLY = (
-    "You have asked for a lot of login links. "
-    f"Please try again in {LINK_WINDOW_SECONDS // 60} minutes."
-)
-HELP_REPLY = (
-    f"Hi from Notchs! Tap the button to get your passport login link, or send {LOGIN_COMMAND}."
-)
-# The help reply's button. Its id comes back when the customer taps it.
-LOGIN_BUTTON = ReplyButton(id="login", title="🔑 Login link")
+# A WhatsApp timestamp further ahead than this is not trusted (the server's clock wins).
+MAX_CLOCK_AHEAD = timedelta(minutes=5)
 
 
 def _notice_key(notice: str, user: User) -> str:
     return f"wa:notice:{notice}:{user.id}"
 
 
-def is_login(message: WhatsAppMessage) -> bool:
-    if message.message_type == MessageType.BUTTON and (
-        button_id_of(message.payload) == LOGIN_BUTTON.id
-    ):
-        return True
-    return (
-        message.message_type in (MessageType.TEXT, MessageType.BUTTON)
-        and (message.body or "").strip().upper() == LOGIN_COMMAND
-    )
+def command_of(message: WhatsAppMessage) -> str | None:
+    """Typed text, trimmed, upper case, single spaces: "my  data " -> "MY DATA"."""
+    if message.message_type != MessageType.TEXT or not message.body:
+        return None
+    return " ".join(message.body.split()).upper()
+
+
+def sent_at(message: WhatsAppMessage) -> datetime:
+    """When the customer sent the message: WhatsApp's own timestamp, so a message handled late
+    (a retry after a restart) is judged by when it was sent, not when we got to it."""
+    now = datetime.now(UTC)
+    payload = message.payload if isinstance(message.payload, dict) else {}
+    meta = payload.get("message")
+    raw = meta.get("timestamp") if isinstance(meta, dict) else None
+    try:
+        moment = datetime.fromtimestamp(int(raw), UTC)
+    except TypeError, ValueError, OverflowError:
+        return message.created_at or now
+    return now if moment > now + MAX_CLOCK_AHEAD else moment
 
 
 async def find_or_create_customer(session: AsyncSession, phone_e164: str) -> User:
@@ -101,22 +130,107 @@ class WhatsAppBot:
             )
             return
 
+        outbox = await self._handle(session, user, message)
         sender = WhatsAppSender(session, self.client)
-        if is_login(message):
-            await self._login(session, sender, user)
-        elif await self._notice_allowed(HELP_NOTICE, user):
-            await sender.send_buttons(user.phone_e164, HELP_REPLY, [LOGIN_BUTTON], user_id=user.id)
+        for reply in outbox:
+            if reply.buttons:
+                await sender.send_buttons(
+                    user.phone_e164, reply.text, reply.buttons, user_id=user.id
+                )
+            else:
+                await sender.send_text(user.phone_e164, reply.text, user_id=user.id)
 
-    async def _login(self, session: AsyncSession, sender: WhatsAppSender, user: User) -> None:
+    async def _handle(
+        self, session: AsyncSession, user: User, message: WhatsAppMessage
+    ) -> list[Reply]:
+        """Decide what to do and do it; returns the replies to send, in order."""
+        command = command_of(message)
+        button = (
+            button_id_of(message.payload) if message.message_type == MessageType.BUTTON else None
+        )
+
+        deletion = DeletionService(session)
+        if command == YES_COMMAND and await deletion.is_waiting_for_yes(user):
+            return [replies.deleted()] if await deletion.confirm(user) else []
+        if (
+            button == replies.AGREE.id
+            or command in AGREE_COMMANDS
+            or (command == YES_COMMAND and user.consent_at is None)
+        ):
+            accepted_with = "button" if button else f"typed {command}"
+            return await self._consent(session, user, accepted_with)
+        if button == replies.PRIVACY.id:
+            return [replies.privacy_notice()]
+
+        scan = parse_scan(message.body) if message.message_type == MessageType.TEXT else None
+        if scan is not None:
+            result = await CheckInService(session, self.redis).scan(
+                user, scan, scanned_at=sent_at(message), whatsapp_message_id=message.id
+            )
+            return self._scan_replies(result)
+
+        if button in LINK_BUTTONS:
+            return await self._link(session, user, LINK_BUTTONS[button], replies.login_link)
+        if command == LOGIN_COMMAND:
+            return await self._link(session, user, None, replies.login_link)
+        if command == MY_DATA_COMMAND:
+            return await self._link(session, user, MY_DATA_PATH, replies.my_data_link)
+        if button == replies.HELP.id or command == HELP_COMMAND:
+            return [replies.help_menu()]
+        if command == DELETE_COMMAND:
+            await deletion.ask(user)
+            return [replies.delete_confirm()]
+        if await self._notice_allowed(NOT_UNDERSTOOD_NOTICE, user):
+            return [replies.not_understood()]
+        return []
+
+    async def _consent(self, session: AsyncSession, user: User, accepted_with: str) -> list[Reply]:
+        if user.consent_at is None:
+            await record_privacy_consent(
+                session, user, at=datetime.now(UTC), accepted_with=accepted_with
+            )
+        result = await CheckInService(session, self.redis).complete_pending(user)
+        if result is None:
+            return [replies.consent_thanks()]
+        return self._scan_replies(result)
+
+    @staticmethod
+    def _scan_replies(result: CheckInResult) -> list[Reply]:
+        venue_name = result.venue.name if result.venue else "this place"
+        match result.outcome:
+            case Outcome.NOTCHED:
+                assert result.notch is not None
+                out = [replies.notched(venue_name, result.notch.notch_no, result.visits_this_month)]
+                if result.announce_founding_no is not None:
+                    out.append(replies.founding_member(result.announce_founding_no))
+                if result.new_badges:
+                    out.append(replies.new_badges(result.new_badges))
+                return out
+            case Outcome.ALREADY_TODAY:
+                return [replies.already_today(venue_name)]
+            case Outcome.NEEDS_CONSENT:
+                return [replies.welcome_consent()]
+            case Outcome.VENUE_NOT_LIVE:
+                return [replies.venue_not_live(venue_name)]
+            case _:
+                return [replies.code_expired()]
+
+    async def _link(
+        self,
+        session: AsyncSession,
+        user: User,
+        next_path: str | None,
+        make_reply: Callable[[str, int], Reply],
+    ) -> list[Reply]:
         try:
-            link = await CustomerAuthService(session, self.redis).issue_login_link(user)
+            link = await CustomerAuthService(session, self.redis).issue_login_link(user, next_path)
         except AuthRateLimitedException:
             if await self._notice_allowed(TOO_MANY_LINKS_NOTICE, user):
-                await sender.send_text(user.phone_e164, TOO_MANY_LINKS_REPLY, user_id=user.id)
-            return
+                return [replies.too_many_links(LINK_WINDOW_SECONDS // 60)]
+            return []
         except TokenInvalidException:  # blocked or deleted since we looked: no link
-            return
-        await sender.send_text(user.phone_e164, LOGIN_REPLY.format(link=link), user_id=user.id)
+            return []
+        return [make_reply(link, LINK_MINUTES)]
 
     async def _notice_allowed(self, notice: str, user: User) -> bool:
         """True at most once per NOTICE_EVERY_SECONDS for this notice and customer."""

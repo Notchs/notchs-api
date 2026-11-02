@@ -91,3 +91,9 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """FastAPI dependency for work that outlives the request (background jobs): they open
+    their own sessions. Override it in tests."""
+    return AsyncSessionLocal

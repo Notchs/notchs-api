@@ -111,6 +111,22 @@ class Settings(BaseSettings):
     # How often the API looks for incoming messages left unhandled (e.g. after a restart).
     # 0 turns the sweep off.
     WHATSAPP_SWEEP_INTERVAL_SECONDS: float = 60
+    # The Notchs number customers message (E.164). The counter QR opens wa.me/<this number>.
+    # The default is the test number from the design mockups: replace it before launch.
+    WHATSAPP_PUBLIC_NUMBER: str = "+919099012345"
+
+    # Background jobs run inside the API (README, "Background jobs"). Monthly jobs claim their
+    # month in job_runs, so several API instances never run one twice.
+    SCHEDULER_ENABLED: bool = True
+    SCHEDULER_INTERVAL_SECONDS: float = 60
+
+    # Venue plan after the free months, used when a venue has no fee of its own (paise, GST
+    # extra). Set it per environment; empty = billing shows no amount yet.
+    DEFAULT_VENUE_FEE_PAISE: int | None = None
+
+    # Public base URL for stored files (venue photos: venues.photo_s3_key), e.g. a CDN in
+    # front of the bucket. Empty = no photo URLs in responses yet.
+    MEDIA_BASE_URL: str | None = None
 
     @field_validator("REDIS_URL")
     @classmethod
@@ -193,6 +209,10 @@ class Settings(BaseSettings):
             raise ValueError("WHATSAPP_API_VERSION must look like v23.0")
         if self.WHATSAPP_SWEEP_INTERVAL_SECONDS < 0:
             raise ValueError("WHATSAPP_SWEEP_INTERVAL_SECONDS must be 0 (off) or more")
+        if not re.fullmatch(r"\+[1-9][0-9]{7,14}", self.WHATSAPP_PUBLIC_NUMBER):
+            raise ValueError("WHATSAPP_PUBLIC_NUMBER must be an E.164 number, e.g. +919099012345")
+        if self.SCHEDULER_INTERVAL_SECONDS <= 0:
+            raise ValueError("SCHEDULER_INTERVAL_SECONDS must be more than 0")
         return self
 
     @field_validator("TOTP_ENCRYPTION_KEY")

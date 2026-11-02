@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.clients.email import EmailMessage
 from app.common.dependencies import PaginationParams
 from app.modules.admin_users.models import AdminUser
+from app.modules.audit import service as audit
 from app.modules.auth.venue_auth import VenueAuthService
 from app.modules.locations.models import Area
 from app.modules.venue_applications import messages
@@ -28,6 +29,7 @@ from app.modules.venue_applications.exceptions import (
 )
 from app.modules.venue_applications.models import ApplicationStatus, VenueApplication
 from app.modules.venue_applications.schemas import ApproveIn, RejectIn
+from app.modules.venues import founding
 from app.modules.venues.models import Venue, VenueMember, VenueMemberRole, VenueStatus
 from app.modules.venues.repository import VenueRepository
 from app.modules.venues.schemas import VenueCreate
@@ -106,6 +108,8 @@ class ApplicationReviewService:
             )
         )
         venue = await venues.set_status(venue.id, VenueStatus.SIGNED, admin_id=admin.id)
+        # One of the first 30: a Founding Venue number and 2 months free from today.
+        await founding.assign(self.session, venue)
 
         member = VenueMember(
             venue_id=venue.id,
@@ -125,6 +129,15 @@ class ApplicationReviewService:
         self._mark_reviewed(application, admin, ApplicationStatus.APPROVED)
         application.venue_id = venue.id
         await self.session.flush()
+        await audit.record(
+            self.session,
+            actor=admin,
+            action="venue_application.approved",
+            target_type="venue",
+            target_id=venue.id,
+            target_label=venue.name,
+            details={"application": application.application_code},
+        )
         await self.session.refresh(application)  # updated_at is set by the database
         welcome = await VenueAuthService(self.session, self.redis).welcome_email(member, venue)
         return application, venue, member, welcome
@@ -136,6 +149,15 @@ class ApplicationReviewService:
         application.rejection_reason = body.reason or None
         self._mark_reviewed(application, admin, ApplicationStatus.REJECTED)
         await self.session.flush()
+        await audit.record(
+            self.session,
+            actor=admin,
+            action="venue_application.rejected",
+            target_type="venue_application",
+            target_id=application.id,
+            target_label=application.venue_name,
+            details={"application": application.application_code},
+        )
         await self.session.refresh(application)  # updated_at is set by the database
         notice = (
             messages.application_rejected_email(application=application) if body.notify else None

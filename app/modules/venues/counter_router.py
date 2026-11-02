@@ -14,6 +14,8 @@ from app.modules.venues.counter_schemas import (
     CounterOut,
     CounterRenameIn,
     DisplayConfigOut,
+    HeartbeatIn,
+    HeartbeatOut,
     PairingLinkOut,
 )
 from app.modules.venues.counters import CounterService, counter_out
@@ -102,7 +104,7 @@ async def pair(
     response.headers["Cache-Control"] = NO_STORE
     return CustomResponse(
         message="This phone is now the counter display.",
-        data=service.display_config(paired.counter, paired.venue),
+        data=await service.display_config(paired.counter, paired.venue),
     )
 
 
@@ -118,16 +120,22 @@ async def config(
     await service.heartbeat(device)
     set_device_cookie(response, request.cookies[DEVICE_COOKIE])  # keep the year rolling
     response.headers["Cache-Control"] = NO_STORE
-    return CustomResponse(message="OK", data=service.display_config(device, venue))
+    return CustomResponse(message="OK", data=await service.display_config(device, venue))
 
 
 @display_router.post(
-    "/heartbeat", status_code=status.HTTP_204_NO_CONTENT, summary="Tell the owner the phone is on"
+    "/heartbeat",
+    response_model=CustomResponse[HeartbeatOut],
+    summary="Tell the owner the phone is on; get today's count and the server's clock",
 )
 async def heartbeat(
-    counter: CurrentCounter, request: Request, service: CounterServiceDep
-) -> Response:
-    await service.heartbeat(counter[0])
-    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    counter: CurrentCounter,
+    request: Request,
+    response: Response,
+    service: CounterServiceDep,
+    body: HeartbeatIn | None = None,
+) -> CustomResponse[HeartbeatOut]:
+    device, venue = counter
+    await service.heartbeat(device, body)
     set_device_cookie(response, request.cookies[DEVICE_COOKIE])
-    return response
+    return CustomResponse(message="OK", data=await service.heartbeat_out(venue))

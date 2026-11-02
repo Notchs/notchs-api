@@ -66,6 +66,17 @@ async def current_user(request: Request, session: DBSession) -> User:
     return await _load(request, session, SubjectType.USER, active_user)
 
 
+async def current_user_optional(request: Request, session: DBSession) -> User | None:
+    """The logged-in customer, or None for anyone else. For public pages that add a personal
+    touch when they can (e.g. a shared card hides places the viewer already notched)."""
+    if not request.cookies.get(access_cookie_name(SubjectType.USER)):
+        return None
+    try:
+        return await current_user(request, session)
+    except NotAuthenticatedException, AccountInactiveException:
+        return None
+
+
 def get_session_service(session: DBSession) -> SessionService:
     return SessionService(session)
 
@@ -81,4 +92,5 @@ CurrentVenueMember = Annotated[VenueMember, Depends(current_venue_member)]
 CurrentAdmin = Annotated[AdminUser, Depends(current_admin)]
 CurrentFullAdmin = Annotated[AdminUser, Depends(current_full_admin)]
 CurrentUser = Annotated[User, Depends(current_user)]
+OptionalUser = Annotated[User | None, Depends(current_user_optional)]
 SessionServiceDep = Annotated[SessionService, Depends(get_session_service)]

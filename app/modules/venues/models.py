@@ -23,7 +23,7 @@ from sqlalchemy import (
     text,
     true,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Entity, in_values, public_code_column
@@ -41,6 +41,21 @@ class VenueCategory(StrEnum):
     HOTEL = "hotel"
     TURF_GYM = "turf_gym"
     OTHER = "other"
+
+
+class VenueTag(StrEnum):
+    """The tags an owner can pick for the venue page (E8). One-word facts, never ratings."""
+
+    LATE_NIGHT = "late_night"
+    WORK_FRIENDLY = "work_friendly"
+    OUTDOOR = "outdoor"
+    FAMILY = "family"
+    PET_FRIENDLY = "pet_friendly"
+    LIVE_MUSIC = "live_music"
+    VEG_ONLY = "veg_only"
+
+
+MAX_VENUE_TAGS = 3
 
 
 class VenueStatus(StrEnum):
@@ -69,6 +84,7 @@ class Venue(Entity):
         ),
         CheckConstraint("first_notch_spots >= 0", name="first_notch_spots_non_negative"),
         CheckConstraint("monthly_fee_paise >= 0", name="monthly_fee_paise_non_negative"),
+        CheckConstraint("notch_count >= 0", name="notch_count_non_negative"),
     )
 
     # Public id shown to people (README, "IDs and public codes"). Not in the spec sheet.
@@ -125,6 +141,12 @@ class Venue(Entity):
     )
     # Soft delete. Deleted venues keep their slug, so old links never point at a new venue.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Added: Notchs ever made here. Each new Notch takes the next number ("Notch #0145").
+    notch_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Added: up to MAX_VENUE_TAGS `VenueTag` values the owner picked, shown on the venue page.
+    tags: Mapped[list[str]] = mapped_column(
+        ARRAY(String(20)), default=list, server_default=text("'{}'")
+    )
 
 
 class VenueMemberRole(StrEnum):
@@ -168,6 +190,7 @@ class CounterDevice(Entity):
     __tablename__ = "counter_devices"
     __table_args__ = (
         CheckConstraint("code_interval_s > 0", name="code_interval_positive"),
+        CheckConstraint("battery_pct BETWEEN 0 AND 100", name="battery_pct_range"),
         # One counter phone per venue for now. Removed counters (revoked_at set) are kept for
         # history and do not count, so more counters later only means dropping this index.
         Index(
@@ -202,3 +225,10 @@ class CounterDevice(Entity):
     # SHA-256 of the long-lived token the paired phone uses to prove itself. Not in the sheet.
     # NULL until the phone is paired.
     token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    # Added: the last scan with a valid code (E3's live test, E5's "last scan 17:58").
+    last_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Added: battery as the phone last reported it (E11 "On · 82%", E4 "Plug me in").
+    battery_pct: Mapped[int | None] = mapped_column(SmallInteger)
+    is_charging: Mapped[bool | None] = mapped_column(Boolean)
+    # Added: when the owner was last emailed "Counter phone is off", so it is sent once per outage.
+    offline_alerted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -7,6 +7,7 @@ to Meta, whatever WHATSAPP_DRY_RUN says. Admins (role `admin`) only, because a r
 a working login link for the customer with that number.
 """
 
+import time
 import uuid
 from typing import Annotated, Any
 
@@ -101,6 +102,7 @@ def meta_payload(phone_e164: str, text: str | None, button: str | None = None) -
                                 {
                                     "from": phone_e164.removeprefix("+"),
                                     "id": f"{SIMULATED_ID_PREFIX}{uuid.uuid4()}",
+                                    "timestamp": str(int(time.time())),
                                     **_message(text, button),
                                 }
                             ],

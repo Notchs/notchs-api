@@ -40,3 +40,18 @@ class DeviceNotPairedException(UnauthorizedException):
 class CounterRateLimitedException(TooManyRequestsException):
     error_code = "counters.rate_limited"
     message = "Too many pairing links. Please try again in an hour."
+
+
+class RangeInvalidException(BadRequestException):
+    error_code = "venues.range_invalid"
+    message = "That date range is not allowed."
+
+
+class CardNotReadyException(NotFoundException):
+    error_code = "venues.card_not_ready"
+    message = "This month's card is made on the 1st of the next month."
+
+
+class NotFoundingVenueException(NotFoundException):
+    error_code = "venues.not_founding"
+    message = "Only the first 30 venues are Founding Venues."

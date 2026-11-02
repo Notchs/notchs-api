@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common import crypto
@@ -30,10 +30,17 @@ from app.modules.auth.exceptions import TokenInvalidException
 from app.modules.auth.one_time_tokens import OneTimeTokenService
 from app.modules.auth.sessions import Subject, active_venue_member
 from app.modules.auth.tokens import hash_token, lifetime, new_token
+from app.modules.locations.models import Area, City
+from app.modules.locations.time import today
+from app.modules.notches.codes import message_template
+from app.modules.notches.models import COUNTED_STATUSES, Notch
 from app.modules.venues.counter_schemas import (
     CounterOut,
     DisplayConfigOut,
+    DisplayQrOut,
     DisplayVenueOut,
+    HeartbeatIn,
+    HeartbeatOut,
     PairingLinkOut,
     TotpSettingsOut,
 )
@@ -67,6 +74,9 @@ def counter_out(counter: CounterDevice, now: datetime | None = None) -> CounterO
         and counter.last_seen_at is not None
         and now - counter.last_seen_at <= ONLINE_WITHIN,
         code_interval_s=counter.code_interval_s,
+        last_scan_at=counter.last_scan_at,
+        battery_pct=counter.battery_pct,
+        is_charging=counter.is_charging,
     )
 
 
@@ -181,22 +191,64 @@ class CounterService:
         ).one_or_none()
         return (row[0], row[1]) if row else None
 
-    async def heartbeat(self, counter: CounterDevice) -> None:
+    async def heartbeat(self, counter: CounterDevice, status: HeartbeatIn | None = None) -> None:
         now = datetime.now(UTC)
+        changed = False
         if counter.last_seen_at is None or now - counter.last_seen_at >= HEARTBEAT_EVERY:
             counter.last_seen_at = now
+            changed = True
+        if status is not None and "battery_pct" in status.model_fields_set:
+            counter.battery_pct = status.battery_pct
+            changed = True
+        if status is not None and "is_charging" in status.model_fields_set:
+            counter.is_charging = status.is_charging
+            changed = True
+        if changed:
+            # Back on: the next outage gets its own "Counter phone is off" email.
+            counter.offline_alerted_at = None
             await self.session.flush()
 
-    @staticmethod
-    def display_config(counter: CounterDevice, venue: Venue) -> DisplayConfigOut:
+    async def notched_today(self, venue: Venue) -> int:
+        """Counted Notchs at the venue today, in its city's day ("14 notched here today")."""
+        tz = await self.session.scalar(select(City.timezone).where(City.id == venue.city_id))
+        return (
+            await self.session.scalar(
+                select(func.count()).where(
+                    Notch.venue_id == venue.id,
+                    Notch.local_date == today(tz),
+                    Notch.status.in_(COUNTED_STATUSES),
+                )
+            )
+            or 0
+        )
+
+    async def heartbeat_out(self, venue: Venue) -> HeartbeatOut:
+        return HeartbeatOut(
+            notched_today=await self.notched_today(venue), server_time=datetime.now(UTC)
+        )
+
+    async def display_config(self, counter: CounterDevice, venue: Venue) -> DisplayConfigOut:
+        area = (
+            await self.session.scalar(select(Area.name).where(Area.id == venue.area_id))
+            if venue.area_id
+            else None
+        )
         return DisplayConfigOut(
             counter_id=counter.id,
             label=counter.label,
-            venue=DisplayVenueOut(name=venue.name, venue_code=venue.venue_code, slug=venue.slug),
+            venue=DisplayVenueOut(
+                name=venue.name, venue_code=venue.venue_code, slug=venue.slug, area=area
+            ),
             totp=TotpSettingsOut(
                 secret=crypto.decrypt(counter.totp_secret_enc),
                 interval_s=counter.code_interval_s,
             ),
+            qr=DisplayQrOut(
+                whatsapp_number=settings.WHATSAPP_PUBLIC_NUMBER.removeprefix("+"),
+                message_template=message_template(venue.name, venue.venue_code),
+            ),
+            notched_today=await self.notched_today(venue),
+            server_time=datetime.now(UTC),
         )
 
     async def _active(self, venue_id, *, for_update: bool = False) -> CounterDevice | None:

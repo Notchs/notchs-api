@@ -11,8 +11,10 @@ from app.modules.venues.models import (
     DEFAULT_FIRST_NOTCH_SPOTS,
     DEFAULT_GEOFENCE_RADIUS_M,
     MAX_FOUNDING_VENUE_NO,
+    MAX_VENUE_TAGS,
     VenueCategory,
     VenueStatus,
+    VenueTag,
 )
 
 Day = Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
@@ -145,3 +147,75 @@ class VenuePublicOut(BaseSchema):
     photo_s3_key: str | None
     opening_hours: OpeningHours | None
     founding_venue_no: int | None
+
+
+# --- venue pages and lists (A8, C5, C6, rankings) --------------------------------------------
+
+
+def _check_tags(value: list[VenueTag]) -> list[VenueTag]:
+    if len(value) > MAX_VENUE_TAGS:
+        raise ValueError(f"Pick at most {MAX_VENUE_TAGS} tags")
+    if len(set(value)) < len(value):
+        raise ValueError("Each tag only once")
+    return value
+
+
+Tags = Annotated[list[VenueTag], AfterValidator(_check_tags)]
+
+
+class OpenStatusOut(BaseSchema):
+    # None when the venue has not set its hours.
+    is_open: bool | None
+    label: str | None  # "Open until 11 PM", "Opens 8 AM"
+    closes_at: str | None = None
+    opens_at: str | None = None
+
+
+class VenueBriefOut(BaseSchema):
+    """A venue in a list: places, rankings, the next step on Home."""
+
+    venue_code: PublicCode
+    name: str
+    slug: str
+    city_slug: str  # with `slug`: /ahmedabad/v/kahwa-house
+    category: VenueCategory
+    area: str | None
+    photo_url: str | None
+    open: OpenStatusOut
+
+
+class RegularNowOut(BaseSchema):
+    name: str  # "Riya S.": only public customers are ever named
+    visits: int
+
+
+class VenuePageOut(VenueBriefOut):
+    """The public venue page (A8)."""
+
+    description: str | None
+    address: str | None
+    landmark: str | None
+    latitude: Decimal | None
+    longitude: Decimal | None
+    opening_hours: OpeningHours | None
+    tags: list[VenueTag]
+    directions_url: str | None
+    trending: bool
+    # "New on Notchs: First Notch spots: 31 of 50 left".
+    first_notch_spots_left: int
+    first_notch_spots: int
+    # The badge available here: "Regular: 5 visits in a month".
+    regular_visits: int
+    regular_now: RegularNowOut | None
+    founding_venue_no: int | None
+
+
+class VenueProfileUpdate(BaseSchema):
+    """What the owner edits in the venue app (E8, E11). Name, category and city are changed by
+    the Notchs team. Only the fields sent change; send null to clear one."""
+
+    description: str | None = Field(None, max_length=160)
+    opening_hours: OpeningHours | None = None
+    tags: Tags | None = None
+    address: str | None = Field(None, max_length=300)
+    landmark: str | None = Field(None, max_length=120)

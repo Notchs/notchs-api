@@ -37,14 +37,21 @@ notchs-api/
 │   │   └── request_context.py  # X-Request-ID + request timing logs
 │   └── modules/                # One package per feature
 │       ├── admin_users/        # Notchs staff accounts (model only; login comes with auth)
+│       ├── audit/              # Audit log (G6) and the admin overview counts
 │       ├── auth/               # Sessions, venue + admin login, passwords, email codes
+│       ├── cards/              # Monthly Notch Cards: customers' (C9, C10, A12) and venues' (E7)
 │       ├── dropdowns/          # GET /dropdowns/{name}: option lists for every form
 │       ├── health/
-│       ├── locations/          # Cities and areas (models only)
-│       ├── users/              # Customers (model only)
+│       ├── jobs/               # Scheduler, monthly jobs (G5), "counter phone is off" emails
+│       ├── locations/          # Cities and areas; days, weeks and months in a city's timezone
+│       ├── notches/            # Check-ins: the counter code, Notchs, badges, fraud signals, G1/G4
+│       ├── passport/           # The customer's passport, /me (C1-C14)
+│       ├── rankings/           # Leaderboards, venue rankings, trending
+│       ├── site/               # The public website's data, /public (A1-A15)
+│       ├── users/              # Customers: founding numbers, deletion and wipe, admin (G3)
 │       ├── venue_applications/ # "Apply as a venue" form + admin review (approve/reject)
-│       ├── venues/             # Venues, venue members, counter phone pairing and display
-│       └── whatsapp/           # WhatsApp: messages table, sender, webhook, processing
+│       ├── venues/             # Venues, members, counter phone, owner dashboard (E5-E14), G2
+│       └── whatsapp/           # WhatsApp: messages, sender, webhook, processing, the bot (B1-B10)
 ├── alembic/                    # Database migrations
 ├── tests/                      # Mirrors app/ layout
 ├── .devcontainer/              # VS Code Dev Container config
@@ -169,6 +176,11 @@ Rules for the shared DB:
 | `venues` | `venue_code` | `VEN` |
 | `admin_users` | `admin_user_code` | `ADM` |
 | `venue_applications` | `application_code` | `APP` |
+| `users` | `user_code` | `USR` |
+| `notches` | `notch_code` | `NCH` |
+
+Notch Cards use their own printed format instead, `NC-1026-0142` (month, year, number that
+month), because the code is part of the card's design.
 
 Add a row here when a new table gets a code. A prefix is never reused or changed.
 
@@ -207,6 +219,10 @@ production refuse to start until the real values are set.
 | `WHATSAPP_APP_SECRET` | Meta app secret (App settings → Basic). Checks the signature on every webhook call; without it, all are refused. Required in production. |
 | `WHATSAPP_VERIFY_TOKEN` | Any random string; also entered in Meta's webhook form. Required in production. |
 | `WHATSAPP_SWEEP_INTERVAL_SECONDS` | How often the API retries incoming messages left unhandled (default `60`; `0` turns it off). |
+| `WHATSAPP_PUBLIC_NUMBER` | The number customers message (E.164). The counter QR opens `wa.me/<number>`. The default is the design's **test** number: set the real one before launch. |
+| `SCHEDULER_ENABLED`, `SCHEDULER_INTERVAL_SECONDS` | Background jobs inside the API (see "Background jobs"). Default on, every 60 s. |
+| `DEFAULT_VENUE_FEE_PAISE` | The plan after the free months, in paise (GST extra), when a venue has no fee of its own. Empty = billing shows no amount. |
+| `MEDIA_BASE_URL` | Public base URL for stored files (venue photos), e.g. a CDN. Empty = no photo URLs yet. |
 
 ### Sessions (for the frontends)
 
@@ -252,11 +268,51 @@ Counter phone (one per venue). The owner pairs a spare phone that then shows the
 | `PATCH /venue/counter` | owner | `{label}` |
 | `DELETE /venue/counter` | owner | Removes the counter; the phone stops on its next call. |
 | `POST /display/pair` | phone | `{token}` from the link. Sets the `nx_device` cookie (a year, `/api/v1/display` only) and returns the display config. |
-| `GET /display/config` | phone | Venue, label and TOTP settings (`secret` base32, 6 digits, 30 s, SHA1): the phone makes the codes itself, offline. |
-| `POST /display/heartbeat` | phone | "I'm on", for the owner's online dot. Call about once a minute. |
+| `GET /display/config` | phone | Venue (name, area), label, TOTP settings (`secret` base32, 6 digits, 30 s, SHA1), the QR (`qr.whatsapp_number`, `qr.message_template`), `notched_today` and `server_time`. The phone makes the codes itself, offline. |
+| `POST /display/heartbeat` | phone | "I'm on", for the owner's online dot. Call about once a minute; body (optional) `{battery_pct, is_charging}`. Returns `{notched_today, server_time}`: set the code clock from `server_time`. |
 
 Pairing gives the counter a new secret, so a replaced phone's codes stop working. The first pairing
 moves the venue from `signed` to `counter_live`.
+
+The QR opens `https://wa.me/<qr.whatsapp_number>?text=<message>`, where the message is
+`qr.message_template` with `{code}` replaced by the current code, URL-encoded:
+
+```
+Notch me at Kahwa House · 482913 [VEN-7K3M9QX2]
+```
+
+(The design's QR spec drew the code as letters, `K7Q-29F [v07]`. The counter was built on
+standard TOTP, which any phone can make offline, so the code is 6 digits and the venue ref is
+its public code. The bot reads the message leniently: spacing, case and a split `482 913` are fine.)
+
+## Check-ins: how a scan becomes a Notch
+
+The bot hands every message with a venue code and 6 digits to `notches/checkin.py`. The rules
+(QR spec, "Verification rules"):
+
+| When | Then | Reply |
+|---|---|---|
+| The code matches the current or previous 30 s window (or the next: phone clock a little ahead) | Notched: the venue's next `Notch #`, `user_visit_no`, badges | B2 (+ B8, B6) |
+| The code is older than that, wrong, or for no live counter | Nothing | B4 |
+| The customer already notched this venue today (the city's day, IST) | Nothing | B3 |
+| The customer's first ever scan, no consent yet | The checked scan waits 15 minutes in `pending_checkins`; "I agree" turns it into their first Notch (in the same transaction, so two taps or a retry make one Notch) | B1 |
+| The counter phone has not checked in for 2 minutes | ± 2 windows accepted; the Notch is `flagged` (`counter_offline`) | B2 |
+| The same code from 2+ numbers | All of them notched and `flagged` (`shared_code`) | B2 |
+| More than 6 valid scans in a minute at one counter | A fraud signal (G4) | B2 |
+| The venue is paused, closed or not live yet | Nothing | "isn't taking Notchs right now" |
+
+Consent (B1) is stored in `user_consents` with the exact wording shown, its version and the time
+(`users/consent.py` holds the wording; changing it means a new version).
+
+Times are WhatsApp's own message timestamps, so a message handled late (a retry after a restart)
+is judged by when it was sent. `flagged` Notchs count everywhere until a reviewer rejects them;
+`rejected` ones count nowhere. A customer can have one counted Notch per venue per day.
+
+Badges (`notches/badges.py`): **First Notch** (one of the venue's first `first_notch_spots`, 50,
+customers), **Founding Member** (one of the first 500), **Cafe Hopper** (5 different cafés),
+**Night Owl** (5 visits at or after 9 PM, until 4 AM), **Regular** (5 visits to one place in a
+calendar month). Founding Member numbers are given at the first website sign-up or first Notch,
+whichever comes first; the bot announces the number with the first Notch.
 
 Customer site (`nx_user_*` cookies): customers log in with the link the WhatsApp bot sends after
 they type LOGIN. The link opens `/login/verify?token=...`; that page must `POST /auth/customer/consume`
@@ -282,7 +338,12 @@ docker compose exec api python -m app.cli admin-link --email you@notchs.com   # 
 ```
 
 They use the database and schema in `.env`. `create-admin` prints the set-password link (and emails
-it unless `EMAIL_DRY_RUN=true`); `--role reviewer` makes a view-only admin.
+it unless `EMAIL_DRY_RUN=true`); `--role reviewer` makes an admin who can review Notchs (G1) and
+view everything else, but not change it.
+
+```bash
+docker compose exec api python -m app.cli run-job notch_cards --period 2026-10   # (re-)run a month
+```
 
 ## WhatsApp webhook
 
@@ -307,11 +368,17 @@ What the bot replies:
 | Customer sends | Bot |
 |---|---|
 | Their first message | Creates the customer (the phone number is their identity) |
-| `LOGIN`, or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes) |
-| Anything else | A short help message with a **🔑 Login link** button (at most once every 10 minutes) |
+| A counter scan (`Notch me at … · 482913 [VEN-…]`) | See "Check-ins": Notched (B2), already today (B3), expired (B4), or consent first (B1); then Founding Member # (B8, with the first Notch) and new badges (B6) |
+| Taps **I agree** (or types `I AGREE`) | Records 18+ and privacy consent, then notches the scan that was waiting |
+| Taps **Privacy notice** | The privacy page link |
+| `LOGIN`, or taps **🔑 Login link**, **My passport**, **See badges**, **See my card** | A single-use passport login link (15 minutes; at most 3 per 15 minutes), with `&next=/badges` or `&next=/cards/latest` for those buttons |
+| `HELP`, or taps **Help** | What the bot understands (B9), with a **🔑 Login link** button |
+| `MY DATA` | A login link to `/me/privacy`, where "Download my data" is |
+| `DELETE`, then `YES` within 10 minutes | Closes the account at once; the scheduler wipes the data within a minute (B9). The `user_deletions` row is the pending state, so a doubled or retried YES closes it once. |
+| Anything else | "I only understand scans. Type HELP for options." (B10, at most once every 10 minutes) |
 
 Blocked and deleted customers get no reply. With `WHATSAPP_DRY_RUN=true` replies, login links
-included, are written to the log instead of sent.
+included, are written to the log instead of sent. All copy lives in `whatsapp/replies.py`.
 
 ### Trying the bot without WhatsApp
 
@@ -321,11 +388,109 @@ Logged in as an admin (role `admin`), outside production:
 POST /api/v1/dev/simulate-inbound
 {"phone": "98765 43210", "text": "LOGIN"}
 {"phone": "98765 43210", "button": "login"}   # a tap on the 🔑 Login link button
+{"phone": "98765 43210", "text": "Notch me at Kahwa House · 482913 [VEN-7K3M9QX2]"}
+{"phone": "98765 43210", "button": "consent_yes"}   # "I agree" after the first scan
 ```
+
+For a scan, use the current code of a paired counter (its `GET /display/config` secret in any
+TOTP app, or `python -c "from app.modules.notches.codes import totp, window_of; import time;
+print(totp('<secret>', window_of(time.time(), 30)))"`).
 
 The text goes through the same steps as a real WhatsApp message, and the response lists the
 bot's replies (`data.replies`, buttons shown as `[title]` lines), login links included.
 Nothing is sent to Meta.
+
+## Customer passport (`/me`, `nx_user_*` cookies)
+
+| Endpoint | Screen | Notes |
+|---|---|---|
+| `GET /me`, `PATCH /me` | C1, C11, C12 | Profile; `needs_name` means show the claim screen. PATCH `name`, `area_id`, `theme`, `is_public`. |
+| `GET /me/home` | C2 | This month's count, rank (from the 3rd Notch, else `notches_to_rank`), ONE next step, ONE unnotched place. |
+| `GET /me/notches?month=2026-10` | C3 | Newest first; group by `local_date`. Plus all-time totals. |
+| `GET /me/notches/{NCH-code}`, `POST …/report {message}` | C4 | Report a mistake: the Notch goes to the review queue. |
+| `GET /me/badges` | C8 | Earned, and locked ones with progress. |
+| `GET /me/leaderboard?period=week\|month\|all&category=&area_id=` | C7 | Your row, top 10; private customers show as "Hidden explorer". |
+| `GET /me/places?lat=&lng=&area_id=&category=&open_now=` | C5 | By distance with a location, else by area; one tag per place. |
+| `GET /me/venues/{VEN-code}` | C6 | The venue page plus your visits. |
+| `GET /me/cards`, `GET /me/cards/latest`, `GET /me/cards/{NC-code}` | C9, C10 | Card with every face's words and the reveal screens. |
+| `PATCH /me/cards/{code} {face, revealed}` | C9 | "Change look"; mark the reveal seen. |
+| `POST /me/cards/{code}/share`, `DELETE …/share` | C9, A12 | Sharing turns on `/card/<code>`; call it before the share sheet. |
+| `GET /me/year/2026` | C14 | The year recap. |
+| `GET /me/export` | C12 | Download my data (JSON file). |
+| `POST /me/delete {"confirm": true}` | C12 | Logs out; the data is wiped within a minute. |
+
+## Website (`/public`, no login)
+
+| Endpoint | Page | Notes |
+|---|---|---|
+| `POST /public/join` | A1 stop 5, A14 | `{name, phone, area_id?, agree: true, turnstile_token}`. Reserves a Founding Member number. A number already on the list gets `already_joined` and nothing else. Never counts as WhatsApp consent. |
+| `GET /public/stats` | A1, A3 | Founding seats left: members (of 500), venues (of 30). |
+| `GET /public/cities/{city}` | A6 | Category tiles, trending this week, areas, month stats, `has_rankings`. |
+| `GET /public/cities/{city}/rankings/{category}?sort=most_visited\|trending&area=&week=` | A7 | `category`: `cafes`, `restaurants-and-bars`, `turfs`, `restaurants`, `bars`, `hotels`. The last full week (Mon-Sun) by default; `week` is a Monday. |
+| `GET /public/cities/{city}/venues/{slug}` | A8 | Hours and open now, directions, First Notch spots, "Regular right now" (public customers only). |
+| `GET /public/cards/{NC-code}` | A12 | Shared cards only; 404 `cards.not_shared` otherwise. Logged-in viewers don't see places they already notched. |
+| `GET /public/pulse` | A4 | Every finished month: visits verified, fakes blocked; `first_pulse_on` before the first. |
+
+Founding Venues: the first 30 approved applications get a number and 2 months free
+(`free_until`), set at approval.
+
+## Venue dashboard (`/venue`, `nx_venue_*` cookies)
+
+Totals only: never a customer's phone number or name.
+
+| Endpoint | Screen | Notes |
+|---|---|---|
+| `GET /venue/home?range=7d\|30d` | E5 | Headline, bars, busiest 2 hours, counter state. `unlocked` after 10 visits. |
+| `GET /venue/daily?from=&to=` | E5 | Day by day, up to 92 days. |
+| `GET /venue/customers?range=7d\|30d` | E6 | New, returning, regulars (5+ visits this month), today's visits. |
+| `GET /venue/visits?date=`, `GET /venue/visits.csv?from=&to=` | E6 | Visits as "6th visit", and the CSV export. |
+| `GET /venue/profile`, `PATCH /venue/profile` | E8 | The page as customers see it; edit description, hours, tags (up to 3), address, landmark. |
+| `PATCH /venue/me/contact` | E11 | Owner name and WhatsApp number. |
+| `GET /venue/cards`, `GET /venue/cards/2026-10` | E7 | Monthly venue cards (made on the 1st). |
+| `GET /venue/certificate` | E14 | Founding Venues only. |
+| `GET /venue/billing` | E10 | Plan, free months, visits this cycle. Payments are not connected yet. |
+| `POST /venue/close-request` | E11 | "Delete venue": emails the team; a person closes it. |
+
+## Admin panel (`/admin`, `nx_admin_*` cookies)
+
+Reviewers can view everything and decide proof review; everything else needs role `admin`.
+
+| Endpoint | Page |
+|---|---|
+| `GET /admin/overview` | Counts for the nav |
+| `GET /admin/notches?status=flagged`, `GET /admin/notches/{ref}`, `POST …/approve`, `POST …/reject` | G1 proof review |
+| `GET /admin/venues?status=&q=`, `GET /admin/venues/{ref}`, `PATCH …`, `POST …/status` | G2 venues |
+| `GET /admin/users?q=`, `GET /admin/users/{ref}` (audited), `POST …/block`, `…/unblock`, `…/delete`, `GET /admin/user-deletions` | G3 users |
+| `GET /admin/fraud-signals?status=open`, `POST /admin/fraud-signals/{id}/resolve` | G4 fraud flags |
+| `GET /admin/jobs`, `POST /admin/jobs/{job}/run {period}` | G5 monthly jobs |
+| `GET /admin/audit-log` | G6 audit log |
+
+## Background jobs
+
+The scheduler runs inside the API (`SCHEDULER_ENABLED`), one tick a minute:
+
+| When | Job |
+|---|---|
+| Every minute | Wipe the data of closed accounts (DELETE + YES, or "Delete everything") |
+| Every 5 minutes | Email owners whose counter phone has been silent 10+ minutes while open |
+| 1st of the month, 06:00 IST | `notch_cards`: a card for every customer with a Notch last month |
+| 06:30 | `venue_cards`: venues' cards and the "Your Notch Card is ready" emails |
+
+No job sends a paid WhatsApp template: "Your card is ready" (B7) is business-initiated, costs
+money and needs Harsh's or Abhishek's approval first. Each month is claimed once in `job_runs`, so restarts and several API instances are safe; a
+job missed on the 1st runs on the next tick that finds it due. Re-running a month (admin or
+`run-job`) only finishes what failed.
+
+## Tests
+
+`pytest` runs everything. Database tests need `TEST_DATABASE_URL`, a Postgres they may create
+and drop schemas in (CI sets it to its throwaway Postgres); without it they are skipped, so
+they never touch the shared Neon database. Locally:
+
+```bash
+docker compose --profile local-db up -d db
+docker compose exec -e TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/notchs api pytest
+```
 
 ## Dropdowns
 

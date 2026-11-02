@@ -23,3 +23,6 @@ known-first-party = ["app"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+# Tests share the session's event loop with the database fixtures (asyncpg connections belong
+# to the loop that opened them).
+asyncio_default_test_loop_scope = "session"

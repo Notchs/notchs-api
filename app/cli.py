@@ -3,6 +3,7 @@
     python -m app.cli create-admin --email you@notchs.com --name "Your Name" [--role admin]
     python -m app.cli admin-link --email you@notchs.com     # new set-password link
     python -m app.cli seed                                  # Ahmedabad + its areas, idempotent
+    python -m app.cli run-job notch_cards --period 2026-10  # run (or re-run) a monthly job
 
 They use DATABASE_URL and DB_SCHEMA from .env, like the API. Links are printed and emailed
 (EMAIL_DRY_RUN=true only logs the email).
@@ -22,6 +23,9 @@ from app.db.session import AsyncSessionLocal, engine
 from app.modules.admin_users.models import AdminRole, AdminUser
 from app.modules.auth.admin_auth import AdminAuthService
 from app.modules.auth.emails import check_email
+from app.modules.jobs import runner
+from app.modules.jobs.models import JobName, RunTrigger
+from app.modules.jobs.monthly import JOBS
 
 
 async def _send_invite(admin: AdminUser, auth: AdminAuthService) -> str:
@@ -66,6 +70,20 @@ async def run_seed() -> int:
     return 0
 
 
+async def run_job(job: JobName, period: str) -> int:
+    try:
+        run_id = await runner.claim(
+            AsyncSessionLocal, job, period, trigger=RunTrigger.CLI, rerun=True
+        )
+    except runner.JobAlreadyRunningError:
+        print(f"{job} for {period} is running right now.")
+        return 1
+    assert run_id is not None
+    status = await runner.execute(AsyncSessionLocal, run_id, JOBS[job], period)
+    print(f"{job} for {period}: {status}. Details: GET /api/v1/admin/jobs")
+    return 0 if status == "succeeded" else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -81,6 +99,9 @@ def main(argv: list[str] | None = None) -> int:
     link = commands.add_parser("admin-link", help="Send an existing admin a new set-password link")
     link.add_argument("--email", required=True)
     commands.add_parser("seed", help="Add Ahmedabad and its areas (safe to repeat)")
+    job = commands.add_parser("run-job", help="Run (or re-run) a monthly job for a month")
+    job.add_argument("job", choices=[j.value for j in JobName])
+    job.add_argument("--period", required=True, help="The month, e.g. 2026-10")
 
     args = parser.parse_args(argv)
     setup_logging()
@@ -91,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
                 return await create_admin(args.email, args.name, AdminRole(args.role))
             if args.command == "admin-link":
                 return await admin_link(args.email)
+            if args.command == "run-job":
+                return await run_job(JobName(args.job), args.period)
             return await run_seed()
         except ValueError as exc:  # e.g. a malformed email
             print(f"Error: {exc}")

@@ -15,6 +15,7 @@ from app.core.logging import get_logger, setup_logging
 from app.core.redis import check_redis, redis_client
 from app.db.session import check_connection, engine
 from app.middleware.request_context import RequestContextMiddleware
+from app.modules.jobs.scheduler import run_scheduler
 from app.modules.whatsapp.processor import get_inbound_processor, run_sweeper
 
 logger = get_logger(__name__)
@@ -50,17 +51,25 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "Connected to Redis at %s (db %s, version %s)", cache["host"], cache["db"], cache["version"]
     )
-    sweeper = None
+    background: list[asyncio.Task[None]] = []
     if settings.WHATSAPP_SWEEP_INTERVAL_SECONDS > 0:
-        sweeper = asyncio.create_task(
-            run_sweeper(get_inbound_processor(), settings.WHATSAPP_SWEEP_INTERVAL_SECONDS),
-            name="whatsapp-sweeper",
+        background.append(
+            asyncio.create_task(
+                run_sweeper(get_inbound_processor(), settings.WHATSAPP_SWEEP_INTERVAL_SECONDS),
+                name="whatsapp-sweeper",
+            )
+        )
+    if settings.SCHEDULER_ENABLED:
+        background.append(
+            asyncio.create_task(
+                run_scheduler(settings.SCHEDULER_INTERVAL_SECONDS), name="scheduler"
+            )
         )
     yield
-    if sweeper is not None:
-        sweeper.cancel()
+    for task in background:
+        task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await sweeper
+            await task
     await redis_client.aclose()
     await engine.dispose()
     logger.info("Shutdown complete")

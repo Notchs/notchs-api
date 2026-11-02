@@ -28,8 +28,13 @@ def user_subject(user: User) -> Subject:
     return Subject(SubjectType.USER, user.id)
 
 
-def login_link(raw_token: str) -> str:
-    return f"{settings.CUSTOMER_APP_URL}/login/verify?{urlencode({'token': raw_token})}"
+def login_link(raw_token: str, next_path: str | None = None) -> str:
+    """`/login/verify?token=...`, plus `&next=/badges` to land on a page after logging in.
+    Only same-site paths are accepted for `next` (never `//host` or a full URL)."""
+    query = {"token": raw_token}
+    if next_path and next_path.startswith("/") and not next_path.startswith("//"):
+        query["next"] = next_path
+    return f"{settings.CUSTOMER_APP_URL}/login/verify?{urlencode(query)}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +50,7 @@ class CustomerAuthService:
         self.tokens = OneTimeTokenService(session)
         self.sessions = SessionService(session)
 
-    async def issue_login_link(self, user: User) -> str:
+    async def issue_login_link(self, user: User, next_path: str | None = None) -> str:
         """For the WhatsApp bot's reply to LOGIN. A new link cancels the older one.
 
         Raises AuthRateLimited after 3 links in 15 minutes; raises TokenInvalid for a blocked
@@ -61,7 +66,7 @@ class CustomerAuthService:
         ):
             raise AuthRateLimitedException("Too many login links. Try again in 15 minutes.")
         raw = await self.tokens.issue(user_subject(user), TokenType.MAGIC_LINK)
-        return login_link(raw)
+        return login_link(raw, next_path)
 
     async def consume(
         self, raw_token: str, *, ip: str | None, user_agent: str | None
