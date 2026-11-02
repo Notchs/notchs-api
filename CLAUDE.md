@@ -17,8 +17,8 @@ If a request conflicts with these rules, stop and ask the person to confirm with
   requests, and never change repository settings or visibility. A teammate other than the author reviews each PR before it is merged.
 - Before opening a PR, merge the latest `origin/development` into your branch. Then push
   your branch and open a PR **into `development`**, filling in the PR template.
-- Commit messages follow Conventional Commits: `feat:`, `fix:`, `chore:`, `docs:`,
-  `refactor:`, `test:`.
+- Commit messages start with the branch name: `feature/<name>-module: <message>`, e.g.
+  `feature/scans-module: add tags and the menu` (bug fixes: `fix/<name>: <message>`).
 
 ## 2. Checks before every PR (all must pass; CI runs them too)
 
