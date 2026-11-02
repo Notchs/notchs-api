@@ -374,8 +374,8 @@ a team agreement. CI still runs on every PR.
    Never run `alembic upgrade` against `public` by hand.
 6. **Never commit secrets** (`.env`, database URLs, dumps). Share credentials through the
    password manager only.
-7. **Commit messages** follow [Conventional Commits](https://www.conventionalcommits.org/):
-   `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`.
+7. **Commit messages** start with the branch name: `feature/<module-name>-module: <message>`,
+   e.g. `feature/scans-module: add tags and the menu` (bug fixes: `fix/<fix-name>: <message>`).
 
 ### Workflow
 

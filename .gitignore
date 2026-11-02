@@ -31,3 +31,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# personal Claude Code settings (shared rules live in .claude/settings.json)
+.claude/settings.local.json
