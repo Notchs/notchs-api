@@ -42,6 +42,8 @@ from app.modules.auth.customer_auth import LINK_WINDOW_SECONDS, CustomerAuthServ
 from app.modules.auth.enums import TokenType
 from app.modules.auth.exceptions import AuthRateLimitedException, TokenInvalidException
 from app.modules.auth.tokens import lifetime
+from app.modules.leaderboards.service import LeaderboardService, Period
+from app.modules.locations.models import City
 from app.modules.scans import replies
 from app.modules.scans.parser import NoCode, Scan, parse
 from app.modules.scans.service import ScanResult, ScanService
@@ -255,7 +257,10 @@ class WhatsAppBot:
         assert result.visit is not None
         agreed = user.consent_at is not None
         link = await self._link_if_possible(session, user) if agreed else None
-        text = replies.stamp_text(venue.name, result.visit.notch_no, result.points_earned, link)
+        rank_line = await self._add_to_leaderboard(session, user, result, venue)
+        text = replies.stamp_text(
+            venue.name, result.visit.notch_no, result.points_earned, link, rank_line
+        )
         image = settings.WHATSAPP_STAMP_IMAGE_URL
         if image:
             await sender.send_image(user.phone_e164, image, text, user_id=user.id)
@@ -275,6 +280,24 @@ class WhatsAppBot:
                 try_rows(result.visit.id, items),
                 user_id=user.id,
             )
+
+    async def _add_to_leaderboard(
+        self, session: AsyncSession, user: User, result: ScanResult, venue: Venue
+    ) -> str | None:
+        """The visit is already saved, so Redis failing only costs the rank line. The next rebuild
+        puts the points back on the board."""
+        assert result.visit is not None
+        service = LeaderboardService(self.redis)
+        try:
+            await service.add_points(
+                venue.city_id, user.id, result.points_earned, result.visit.visit_date
+            )
+            rank = await service.rank_of(venue.city_id, user.id, Period.MONTH)
+        except RedisError:
+            logger.exception("Visit %s not on the leaderboard: Redis failed", result.visit.id)
+            return None
+        city = await session.get(City, venue.city_id)
+        return replies.rank_text(rank.rank, city.name) if rank and city else None
 
     async def _tried(
         self,

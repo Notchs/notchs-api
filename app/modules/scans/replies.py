@@ -15,9 +15,17 @@ TRY_VISIT_CLOSED = "This visit is closed."
 TRY_NOT_ON_MENU = "That isn't on this venue's menu any more."
 
 
-def stamp_text(venue_name: str, notch_no: int, points: int, link: str | None) -> str:
+def rank_text(rank: int, city_name: str) -> str:
+    return f"You're #{rank} in {city_name} this month."
+
+
+def stamp_text(
+    venue_name: str, notch_no: int, points: int, link: str | None, rank_line: str | None = None
+) -> str:
     """The link, when there is one, stays on the last line."""
     stamp = f"Stamp added at {venue_name}! Notch #{notch_no:04d}. +{points} points."
+    if rank_line:
+        stamp = f"{stamp}\n{rank_line}"
     if link is None:
         return f"{stamp}\n\nSend LOGIN to see your rank in your city."
     return f"{stamp}\n\nNow you can see your rank in your city. {_LINK_LINE.format(link=link)}"

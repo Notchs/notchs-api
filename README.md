@@ -41,6 +41,7 @@ notchs-api/
 │       ├── dropdowns/          # GET /dropdowns/{name}: option lists for every form
 │       ├── health/
 │       ├── locations/          # Cities and areas (models only)
+│       ├── leaderboards/       # City ranks in Redis, rebuilt from the points ledger
 │       ├── tags/               # Tags (admins only), venue tags and items, "What did you try?"
 │       ├── users/              # Customers (model only)
 │       ├── venue_applications/ # "Apply as a venue" form + admin review (approve/reject)
@@ -342,6 +343,22 @@ POST /api/v1/dev/simulate-inbound
 The text goes through the same steps as a real WhatsApp message, and the response lists the
 bot's replies (`data.replies`, buttons shown as `[title]` lines), login links included.
 Nothing is sent to Meta.
+
+## Leaderboards
+
+Ranks live in Redis per city, this month (India time) and all time, and points go on the board of
+the city the visit happened in. Postgres (`points_ledger`) is the truth: boards are rebuilt from it
+at startup and every `LEADERBOARD_REBUILD_INTERVAL_SECONDS`, so an emptied Redis repairs itself. To
+do it now: `python -m app.cli rebuild-leaderboards`.
+
+Everyone with points is ranked and equal points share a rank. Customers are private by default: they
+keep their place, but their row has no name or handle until they choose to be public.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /leaderboards?city_id=&period=month&limit=50` | Public | `period` is `month` or `all`; `limit` up to 100; 60 calls a minute per IP |
+| `GET /leaderboards/me` | Logged-in customer | Their rank and points in their home city, and `is_public` |
+| `PATCH /leaderboards/me` | Logged-in customer | `{is_public}`: show or hide their name |
 
 ## Tags
 
