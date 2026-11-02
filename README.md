@@ -337,6 +337,7 @@ Logged in as an admin (role `admin`), outside production:
 POST /api/v1/dev/simulate-inbound
 {"phone": "98765 43210", "text": "LOGIN"}
 {"phone": "98765 43210", "button": "login"}   # a tap on the 🔑 Login link button
+{"phone": "98765 43210", "scan": "KAHWA"}      # a scan at this venue, with its live code
 {"phone": "98765 43210", "button": "consent_agree"}   # a tap on I agree, I'm 18+ (a new number needs this before a link)
 ```
 
