@@ -111,6 +111,8 @@ class Settings(BaseSettings):
     # The number customers message, digits only with the country code (e.g. 15556755530 for the
     # test number). Counter phones put it in their scan QR.
     WHATSAPP_PUBLIC_NUMBER: str | None = None
+    # Public https image sent with a stamp. Empty = the stamp is a text message.
+    WHATSAPP_STAMP_IMAGE_URL: str | None = None
     # How often the API looks for incoming messages left unhandled (e.g. after a restart).
     # 0 turns the sweep off.
     WHATSAPP_SWEEP_INTERVAL_SECONDS: float = 60
@@ -199,6 +201,10 @@ class Settings(BaseSettings):
             r"[1-9][0-9]{7,14}", self.WHATSAPP_PUBLIC_NUMBER
         ):
             raise ValueError("WHATSAPP_PUBLIC_NUMBER must be digits with the country code")
+        if self.WHATSAPP_STAMP_IMAGE_URL and not self.WHATSAPP_STAMP_IMAGE_URL.startswith(
+            "https://"
+        ):
+            raise ValueError("WHATSAPP_STAMP_IMAGE_URL must be an https:// address")
         if not re.fullmatch(r"v\d+\.\d+", self.WHATSAPP_API_VERSION):
             raise ValueError("WHATSAPP_API_VERSION must look like v23.0")
         if self.WHATSAPP_SWEEP_INTERVAL_SECONDS < 0:

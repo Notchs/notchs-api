@@ -251,7 +251,7 @@ async def test_too_many_links_is_answered_even_right_after_help(
 
 @pytest.mark.parametrize(
     ("body", "kind"),
-    [("hi", "text"), ("NOTCH KAHWA 482913", "text"), (None, "other"), ("my bill", "image")],
+    [("hi", "text"), ("what is notchs?", "text"), (None, "other"), ("my bill", "image")],
 )
 async def test_anything_else_gets_help(
     db: AsyncSession, real_bot: WhatsAppBot, meta: FakeMeta, body: str | None, kind: str

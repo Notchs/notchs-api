@@ -214,6 +214,7 @@ production refuse to start until the real values are set.
 | `WHATSAPP_APP_SECRET` | Meta app secret (App settings → Basic). Checks the signature on every webhook call; without it, all are refused. Required in production. |
 | `WHATSAPP_VERIFY_TOKEN` | Any random string; also entered in Meta's webhook form. Required in production. |
 | `WHATSAPP_PUBLIC_NUMBER` | The number customers message, digits with the country code (e.g. `15556755530`, the test number). Counter phones put it in their scan QR. Required in production. |
+| `WHATSAPP_STAMP_IMAGE_URL` | Optional public https image sent with a stamp. Unset: the stamp is a text message. |
 | `WHATSAPP_SWEEP_INTERVAL_SECONDS` | How often the API retries incoming messages left unhandled (default `60`; `0` turns it off). |
 
 ### Sessions (for the frontends)
@@ -316,9 +317,13 @@ What the bot replies:
 |---|---|
 | Their first message | Creates the customer (the phone number is their identity) |
 | `LOGIN`, or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes) |
+| A scan: `Hey Notchs!, get me notched. KAHWA-482913` | Counts the visit: stamp, notch number, points and a login link. Or says why not (wrong or expired code, already notched today, daily limit); the same refusal at most once a minute |
+| The scan sentence with no code | No stamp, a login link |
+| Taps **I agree, I'm 18+** | Records the privacy consent and 18+ confirmation, replies with a login link |
 | Anything else | A short help message with a **🔑 Login link** button (at most once every 10 minutes) |
 
-Blocked and deleted customers get no reply. With `WHATSAPP_DRY_RUN=true` replies, login links
+Customers who have not agreed yet get the consent question instead of the link after a scan; the
+visit still counts. Blocked and deleted customers get no reply. With `WHATSAPP_DRY_RUN=true` replies, login links
 included, are written to the log instead of sent.
 
 ### Trying the bot without WhatsApp

@@ -43,6 +43,12 @@ class WhatsAppSender:
         payload = payloads.text_message(phone_e164, body)
         return await self._send(phone_e164, payload, MessageType.TEXT, body, user_id)
 
+    async def send_image(
+        self, phone_e164: str, link: str, caption: str, *, user_id: uuid.UUID | None = None
+    ) -> WhatsAppMessage:
+        payload = payloads.image_message(phone_e164, link, caption)
+        return await self._send(phone_e164, payload, MessageType.IMAGE, caption, user_id)
+
     async def send_buttons(
         self,
         phone_e164: str,

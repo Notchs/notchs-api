@@ -3,32 +3,49 @@
     every message   find the customer by phone, or create them (their first message is sign-up)
     LOGIN           reply with a single-use passport login link (3 per 15 minutes); typed, or a
                     tap on the help reply's "Login link" button
+    "I agree" tap   record the privacy consent and 18+ confirmation, reply with a login link
+    a scan          count the visit or refuse it (scans module), then reply; "KAHWA-482913"
+    no code         the scan sentence from a QR away from a venue: no stamp, a login link
     anything else   a short help reply with that button, at most once every 10 minutes per customer
 
-Blocked and deleted customers get no reply. Check-in codes (`NOTCH KAHWA 482913`) get the help
-reply for now; stamping comes with the check-ins module.
+Customers who have not agreed yet get the consent question instead of a link after a scan. A scan
+still counts first, because its code expires fast.
+
+Blocked and deleted customers get no reply.
 
 The processor calls the bot inside a transaction that holds a lock on the message, and marks the
 message done afterwards. If the bot raises, nothing is kept and the message is retried, so any
 reply sent before the error could be sent again: sending a reply is the last thing it does.
+A scan is different: its result and "message done" are committed before the reply, so the venue
+is not locked during the call to Meta. A crash in that gap loses the reply but never counts or
+replies twice, and scanning again answers "already notched today".
 All replies answer the customer's own message, so they fall inside WhatsApp's free 24-hour window.
 """
 
+from datetime import UTC, datetime
+
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.whatsapp import WhatsAppClient
 from app.common.phone import masked_phone
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.modules.auth.customer_auth import LINK_WINDOW_SECONDS, CustomerAuthService
 from app.modules.auth.enums import TokenType
 from app.modules.auth.exceptions import AuthRateLimitedException, TokenInvalidException
 from app.modules.auth.tokens import lifetime
+from app.modules.scans import replies
+from app.modules.scans.parser import NoCode, Scan, parse
+from app.modules.scans.service import ScanResult, ScanService
+from app.modules.users.consent import CONSENT_VERSION, consent_text
 from app.modules.users.handles import clean_name, free_handle
 from app.modules.users.models import User, UserStatus
 from app.modules.users.repository import UserRepository
+from app.modules.venues.models import Venue
 from app.modules.whatsapp.models import MessageType, WhatsAppMessage
 from app.modules.whatsapp.payloads import ReplyButton
 from app.modules.whatsapp.sender import WhatsAppSender
@@ -57,10 +74,21 @@ HELP_REPLY = (
 )
 # The help reply's button. Its id comes back when the customer taps it.
 LOGIN_BUTTON = ReplyButton(id="login", title="🔑 Login link")
+CONSENT_BUTTON = ReplyButton(id="consent_agree", title="I agree, I'm 18+")
+CONSENT_THANKS = "Thanks!"
+# The same refused-scan or no-code reply at most once a minute per customer.
+SCAN_NOTICE_EVERY_SECONDS = 60
 
 
 def _notice_key(notice: str, user: User) -> str:
     return f"wa:notice:{notice}:{user.id}"
+
+
+def is_consent(message: WhatsAppMessage) -> bool:
+    return (
+        message.message_type == MessageType.BUTTON
+        and button_id_of(message.payload) == CONSENT_BUTTON.id
+    )
 
 
 def is_login(message: WhatsAppMessage) -> bool:
@@ -119,6 +147,15 @@ class WhatsAppBot:
         sender = WhatsAppSender(session, self.client)
         if is_login(message):
             await self._login(session, sender, user)
+            return
+        if is_consent(message):
+            await self._consent(session, sender, user)
+            return
+        scan = parse(message.body) if message.message_type == MessageType.TEXT else None
+        if isinstance(scan, Scan):
+            await self._scan(session, sender, user, message, scan)
+        elif isinstance(scan, NoCode):
+            await self._no_code(session, sender, user)
         elif await self._notice_allowed(HELP_NOTICE, user):
             await sender.send_buttons(user.phone_e164, HELP_REPLY, [LOGIN_BUTTON], user_id=user.id)
 
@@ -133,7 +170,91 @@ class WhatsAppBot:
             return
         await sender.send_text(user.phone_e164, LOGIN_REPLY.format(link=link), user_id=user.id)
 
-    async def _notice_allowed(self, notice: str, user: User) -> bool:
-        """True at most once per NOTICE_EVERY_SECONDS for this notice and customer."""
+    async def _scan(
+        self,
+        session: AsyncSession,
+        sender: WhatsAppSender,
+        user: User,
+        message: WhatsAppMessage,
+        scan: Scan,
+    ) -> None:
+        result = await ScanService(session, self.redis).record_scan(user, message.id, scan)
+        message.processed_at = datetime.now(UTC)
+        await session.commit()  # before the reply: see the top of this file
+
+        venue_id = result.scan_session.venue_id
+        venue = await session.get(Venue, venue_id) if venue_id else None
+        if result.verified:
+            assert venue is not None  # a counted visit always has one
+            await self._stamp(session, sender, user, result, venue)
+            return
+        assert result.reject_reason is not None
+        text = replies.rejection_text(result.reject_reason, venue.name if venue else None)
+        if text is not None and await self._notice_allowed(
+            f"scan_{result.reject_reason.value}", user, SCAN_NOTICE_EVERY_SECONDS
+        ):
+            await sender.send_text(user.phone_e164, text, user_id=user.id)
+
+    async def _stamp(
+        self,
+        session: AsyncSession,
+        sender: WhatsAppSender,
+        user: User,
+        result: ScanResult,
+        venue: Venue,
+    ) -> None:
+        assert result.visit is not None
+        agreed = user.consent_at is not None
+        link = await self._link_if_possible(session, user) if agreed else None
+        text = replies.stamp_text(venue.name, result.visit.notch_no, result.points_earned, link)
+        image = settings.WHATSAPP_STAMP_IMAGE_URL
+        if image:
+            await sender.send_image(user.phone_e164, image, text, user_id=user.id)
+        else:
+            await sender.send_text(user.phone_e164, text, user_id=user.id)
+        if not agreed:
+            await sender.send_buttons(
+                user.phone_e164, consent_text(), [CONSENT_BUTTON], user_id=user.id
+            )
+
+    async def _no_code(self, session: AsyncSession, sender: WhatsAppSender, user: User) -> None:
+        if not await self._notice_allowed("no_code", user, SCAN_NOTICE_EVERY_SECONDS):
+            return
+        if user.consent_at is None:
+            await sender.send_buttons(
+                user.phone_e164,
+                f"{replies.SCAN_AT_VENUE}\n\n{consent_text()}",
+                [CONSENT_BUTTON],
+                user_id=user.id,
+            )
+            return
+        link = await self._link_if_possible(session, user)
+        await sender.send_text(user.phone_e164, replies.no_code_text(link), user_id=user.id)
+
+    async def _consent(self, session: AsyncSession, sender: WhatsAppSender, user: User) -> None:
+        recorded = await UserRepository(session).record_consent(
+            user.id, CONSENT_VERSION, datetime.now(UTC)
+        )
+        if not recorded:  # a second tap: already answered
+            return
+        await session.refresh(user)
+        link = await self._link_if_possible(session, user)
+        text = f"{CONSENT_THANKS} {replies.no_code_text(link)}"
+        await sender.send_text(user.phone_e164, text, user_id=user.id)
+
+    async def _link_if_possible(self, session: AsyncSession, user: User) -> str | None:
+        """A login link, or None rather than losing the reply it goes in."""
+        try:
+            return await CustomerAuthService(session, self.redis).issue_login_link(user)
+        except AuthRateLimitedException, TokenInvalidException:
+            return None
+        except RedisError:
+            logger.exception("No login link for customer %s: Redis failed", user.id)
+            return None
+
+    async def _notice_allowed(
+        self, notice: str, user: User, seconds: int = NOTICE_EVERY_SECONDS
+    ) -> bool:
+        """True at most once per `seconds` for this notice and customer."""
         key = _notice_key(notice, user)
-        return bool(await self.redis.set(key, "1", ex=NOTICE_EVERY_SECONDS, nx=True))
+        return bool(await self.redis.set(key, "1", ex=seconds, nx=True))

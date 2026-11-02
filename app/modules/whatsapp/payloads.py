@@ -10,6 +10,7 @@ from typing import Any
 from app.common.phone import E164
 
 MAX_TEXT_LENGTH = 4096
+MAX_CAPTION_LENGTH = 1024
 MAX_BUTTON_BODY_LENGTH = 1024
 MAX_BUTTONS = 3
 MAX_BUTTON_TITLE_LENGTH = 20
@@ -48,6 +49,15 @@ def text_message(phone_e164: str, body: str, *, preview_url: bool = False) -> di
         "type": "text",
         "text": {"body": body, "preview_url": preview_url},
     }
+
+
+def image_message(phone_e164: str, link: str, caption: str) -> dict[str, Any]:
+    """Meta fetches the image from `link`, which must be public and https."""
+    if not link.startswith("https://"):
+        raise ValueError("An image link must be https")
+    if len(caption) > MAX_CAPTION_LENGTH:
+        raise ValueError(f"Image captions are limited to {MAX_CAPTION_LENGTH} characters")
+    return _base(phone_e164) | {"type": "image", "image": {"link": link, "caption": caption}}
 
 
 def buttons_message(phone_e164: str, body: str, buttons: list[ReplyButton]) -> dict[str, Any]:
