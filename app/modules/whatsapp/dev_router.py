@@ -1,22 +1,19 @@
 """`/dev`: act as a WhatsApp customer without a phone or Meta. Never available in production.
 
-`POST /dev/simulate-inbound` sends a text, a tap on one of the bot's buttons, or a scan at a venue
-(with its counter's live code) through the same path as a real message (parsed, stored, handled by
-the bot) and returns the bot's replies, login links included. Nothing goes
+`POST /dev/simulate-inbound` sends a text, or a tap on one of the bot's buttons, through the
+same path as a real message (parsed, stored, handled by the bot) and returns the bot's replies,
+login links included. A scan needs the real live code, like any other. Nothing goes
 to Meta, whatever WHATSAPP_DRY_RUN says. Admins (role `admin`) only, because a reply can hold
 a working login link for the customer with that number.
 """
 
-import time
 import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.clients.whatsapp import SendResult
-from app.common import crypto
 from app.common.dependencies import DBSession
 from app.common.exceptions import NotFoundException
 from app.common.phone import masked_phone
@@ -24,9 +21,6 @@ from app.common.schemas import CustomResponse
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.modules.auth.dependencies import CurrentFullAdmin
-from app.modules.scans import verifier
-from app.modules.scans.repository import ScanRepository
-from app.modules.venues.scan_codes import scan_text
 from app.modules.whatsapp.bot import WhatsAppBot
 from app.modules.whatsapp.models import WhatsAppMessage
 from app.modules.whatsapp.processor import (
@@ -122,22 +116,10 @@ def meta_payload(phone_e164: str, text: str | None, button: str | None = None) -
     }
 
 
-async def _scan_message(session: AsyncSession, scan_code: str) -> str:
-    """What the counter phone's QR would pre-type right now."""
-    repository = ScanRepository(session)
-    venue = await repository.venue_by_scan_code(scan_code.upper())
-    counter = await repository.paired_counter(venue.id) if venue else None
-    if venue is None or counter is None:
-        raise NotFoundException("No venue with this scan code has a paired counter phone.")
-    slot = verifier.slot_of(time.time(), counter.code_interval_s)
-    code = verifier.code_at(crypto.decrypt(counter.totp_secret_enc), slot)
-    return scan_text(venue.scan_code, code)
-
-
 @router.post(
     "/simulate-inbound",
     response_model=CustomResponse[SimulatedInboundOut],
-    summary="Send a WhatsApp text, button tap or scan as a customer, get the bot's replies "
+    summary="Send a WhatsApp text or button tap as a customer, get the bot's replies "
     "(not in production)",
 )
 async def simulate_inbound(
@@ -146,9 +128,8 @@ async def simulate_inbound(
     session: DBSession,
     processor: ProcessorDep,
 ) -> CustomResponse[SimulatedInboundOut]:
-    text = await _scan_message(session, body.scan) if body.scan else body.text
     stored = await WhatsAppWebhookService(session).store(
-        parse_webhook(meta_payload(body.phone, text, body.button))
+        parse_webhook(meta_payload(body.phone, body.text, body.button))
     )
     await session.commit()
     (message_id,) = stored.new_message_ids

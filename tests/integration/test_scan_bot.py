@@ -261,6 +261,7 @@ async def test_first_scan_counts_and_asks_for_consent_with_no_link(
     stamp, question = meta.texts()
     assert stamp.startswith("Stamp added at Kahwa House!")
     assert "/login/verify" not in stamp
+    assert "LOGIN" not in stamp
     assert question == consent_text()
     assert meta.buttons() == [CONSENT_BUTTON.id]
     assert await visits_of(db, user) == 1

@@ -20,12 +20,21 @@ def rank_text(rank: int, city_name: str) -> str:
 
 
 def stamp_text(
-    venue_name: str, notch_no: int, points: int, link: str | None, rank_line: str | None = None
+    venue_name: str,
+    notch_no: int,
+    points: int,
+    link: str | None,
+    rank_line: str | None = None,
+    *,
+    agreed: bool = True,
 ) -> str:
-    """The link, when there is one, stays on the last line."""
+    """The link, when there is one, stays on the last line. Customers who have not agreed get
+    the consent question next, so they are not sent off to ask for a link."""
     stamp = f"Stamp added at {venue_name}! Notch #{notch_no:04d}. +{points} points."
     if rank_line:
         stamp = f"{stamp}\n{rank_line}"
+    if not agreed:
+        return stamp
     if link is None:
         return f"{stamp}\n\nSend LOGIN to see your rank in your city."
     return f"{stamp}\n\nNow you can see your rank in your city. {_LINK_LINE.format(link=link)}"

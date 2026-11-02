@@ -259,7 +259,7 @@ class WhatsAppBot:
         link = await self._link_if_possible(session, user) if agreed else None
         rank_line = await self._add_to_leaderboard(session, user, result, venue)
         text = replies.stamp_text(
-            venue.name, result.visit.notch_no, result.points_earned, link, rank_line
+            venue.name, result.visit.notch_no, result.points_earned, link, rank_line, agreed=agreed
         )
         image = settings.WHATSAPP_STAMP_IMAGE_URL
         if image:

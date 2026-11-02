@@ -25,6 +25,12 @@ def test_stamp_without_a_link_says_how_to_get_one() -> None:
     assert "Send LOGIN" in replies.stamp_text("Kahwa House", 1, 10, None)
 
 
+def test_stamp_before_agreeing_does_not_mention_login() -> None:
+    text = replies.stamp_text("Kahwa House", 1, 12, None, "You're #1 in Ahmedabad.", agreed=False)
+
+    assert text == "Stamp added at Kahwa House! Notch #0001. +12 points.\nYou're #1 in Ahmedabad."
+
+
 def test_no_code_never_promises_a_stamp() -> None:
     assert "Stamp added" not in replies.no_code_text(None)
     assert replies.no_code_text("https://x.example/l").endswith("\nhttps://x.example/l")
