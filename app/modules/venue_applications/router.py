@@ -41,7 +41,6 @@ TurnstileClientDep = Annotated[TurnstileClient, Depends(get_turnstile_client)]
 async def send_code(
     body: SendCodeIn,
     request: Request,
-    background: BackgroundTasks,
     service: ApplicationServiceDep,
     email_client: EmailClientDep,
     turnstile: TurnstileClientDep,
@@ -49,8 +48,7 @@ async def send_code(
     ip = client_ip(request)
     if not await turnstile.verify(body.turnstile_token, ip=ip):
         raise CaptchaFailedException()
-    message = await service.send_code(body.email, ip=ip)
-    background.add_task(email_client.send, message)
+    await service.send_code(body.email, ip=ip, client=email_client)
     return CustomResponse(message="We sent a 6-digit code to your email.")
 
 

@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 import pytest
 from fakeredis import FakeAsyncRedis
 
+from app.clients.email import EmailMessage, EmailSendError
 from app.core import rate_limit
 from app.modules.auth.enums import OtpPurpose
 from app.modules.auth.exceptions import AuthRateLimitedException, CodeInvalidException
@@ -133,3 +134,109 @@ async def test_rate_limit_window_is_not_extended_by_later_hits(redis: FakeAsyncR
     assert await rate_limit.is_limited(redis, "rl:test", limit=2)
     await rate_limit.reset(redis, "rl:test")
     assert not await rate_limit.is_limited(redis, "rl:test", limit=2)
+
+
+# --- a code only counts once the email provider accepted it --------------------------------------
+
+
+class FakeEmailClient:
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.sent: list[EmailMessage] = []
+
+    async def send(self, message: EmailMessage) -> None:
+        if self.fail:
+            raise EmailSendError("Resend returned 403: domain not verified")
+        self.sent.append(message)
+
+
+def _message(email: str = EMAIL) -> EmailMessage:
+    return EmailMessage(to=email, subject="Your Notchs code: 123456", text="123456")
+
+
+async def _send(codes: EmailCodes, client: FakeEmailClient, email: str = EMAIL) -> None:
+    await codes.issue(APP, email, ip=IP)
+    await codes.deliver(client, _message(email), APP, ip=IP)  # type: ignore[arg-type]
+
+
+async def test_a_delivered_code_counts(codes: EmailCodes, redis: FakeAsyncRedis) -> None:
+    client = FakeEmailClient()
+
+    await _send(codes, client)
+
+    assert len(client.sent) == 1
+    assert await redis.get(f"rl:otp:email:{EMAIL}") == "1"
+    assert await redis.get(f"rl:otp:ip:{IP}") == "1"
+    with pytest.raises(AuthRateLimitedException):  # the 1-minute cooldown applies
+        await codes.issue(APP, EMAIL, ip=IP)
+
+
+async def test_a_failed_send_is_given_back(codes: EmailCodes, redis: FakeAsyncRedis) -> None:
+    with pytest.raises(EmailSendError):
+        await _send(codes, FakeEmailClient(fail=True))
+
+    assert await redis.exists(f"otp:{APP.value}:{EMAIL}") == 0  # the code is gone
+    assert await redis.exists(f"otp:cd:{APP.value}:{EMAIL}") == 0  # no cooldown
+    assert await redis.exists(f"rl:otp:email:{EMAIL}") == 0
+    assert await redis.exists(f"rl:otp:ip:{IP}") == 0
+    await _send(codes, FakeEmailClient())  # works straight away
+
+
+async def test_an_email_outage_never_locks_anyone_out(codes: EmailCodes) -> None:
+    for _ in range(MAX_CODES_PER_IP_PER_HOUR + 5):
+        with pytest.raises(EmailSendError):
+            await _send(codes, FakeEmailClient(fail=True))
+
+    await _send(codes, FakeEmailClient())  # still allowed once email works again
+
+
+async def test_a_failed_send_keeps_earlier_successful_counts(
+    codes: EmailCodes, redis: FakeAsyncRedis
+) -> None:
+    await _send(codes, FakeEmailClient())
+    await _skip_cooldown(redis)
+
+    with pytest.raises(EmailSendError):
+        await _send(codes, FakeEmailClient(fail=True))
+
+    assert await redis.get(f"rl:otp:email:{EMAIL}") == "1"
+    assert await redis.ttl(f"rl:otp:email:{EMAIL}") > 0  # the window keeps its end
+
+
+async def test_limit_messages_say_how_long_to_wait(codes: EmailCodes, redis) -> None:
+    for i in range(MAX_CODES_PER_EMAIL_PER_HOUR):
+        await codes.issue(APP, EMAIL, ip=f"10.0.0.{i}")
+        await _skip_cooldown(redis)
+    with pytest.raises(AuthRateLimitedException, match=r"this email.*an hour"):
+        await codes.issue(APP, EMAIL, ip="10.0.0.99")
+
+    for i in range(MAX_CODES_PER_IP_PER_HOUR):
+        await codes.issue(APP, f"other{i}@kahwa.in", ip=IP)
+    with pytest.raises(AuthRateLimitedException, match=r"this connection.*an hour"):
+        await codes.issue(APP, "one-more@kahwa.in", ip=IP)
+
+
+async def test_a_refused_request_does_not_start_a_cooldown(codes: EmailCodes, redis) -> None:
+    for i in range(MAX_CODES_PER_IP_PER_HOUR):
+        await codes.issue(APP, f"other{i}@kahwa.in", ip=IP)
+
+    with pytest.raises(AuthRateLimitedException):
+        await codes.issue(APP, EMAIL, ip=IP)
+
+    assert await redis.exists(f"otp:cd:{APP.value}:{EMAIL}") == 0
+    assert await redis.exists(f"rl:otp:email:{EMAIL}") == 0  # not counted for this email
+    await codes.issue(APP, EMAIL, ip="198.51.100.1")  # another connection may ask at once
+
+
+async def test_undo_hit(redis: FakeAsyncRedis) -> None:
+    await rate_limit.hit(redis, "rl:test", limit=5, window_seconds=100)
+    await rate_limit.hit(redis, "rl:test", limit=5, window_seconds=100)
+
+    await rate_limit.undo_hit(redis, "rl:test")
+    assert await redis.get("rl:test") == "1"
+    assert 0 < await redis.ttl("rl:test") <= 100
+
+    await rate_limit.undo_hit(redis, "rl:test")
+    await rate_limit.undo_hit(redis, "rl:missing")  # expired meanwhile: nothing left behind
+    assert await redis.exists("rl:test") == 0
+    assert await redis.exists("rl:missing") == 0

@@ -7,6 +7,10 @@ Nothing is stored in Postgres. Redis keys:
     rl:otp:email:{email}         codes sent to this address in the last hour
     rl:otp:ip:{ip}               codes requested from this IP in the last hour
     emv:{token hash}             verified email, for the application form, 30 min, single use
+
+A code only counts against the cooldown and the hourly limits once the email provider accepted
+it: `deliver` gives the attempt back when sending fails, so an email outage (or a wrong sender
+setting) never locks people out.
 """
 
 import hashlib
@@ -15,11 +19,15 @@ import secrets
 
 from redis.asyncio import Redis
 
+from app.clients.email import EmailClient, EmailMessage, EmailSendError
 from app.core import rate_limit
+from app.core.logging import get_logger
 from app.modules.auth.emails import normalize_email
 from app.modules.auth.enums import OtpPurpose
 from app.modules.auth.exceptions import AuthRateLimitedException, CodeInvalidException
 from app.modules.auth.tokens import hash_token, new_token
+
+logger = get_logger(__name__)
 
 CODE_DIGITS = 6
 CODE_TTL_SECONDS = 10 * 60
@@ -33,6 +41,18 @@ HOUR = 60 * 60
 
 def _code_key(purpose: OtpPurpose, email: str) -> str:
     return f"otp:{purpose.value}:{email}"
+
+
+def _cooldown_key(purpose: OtpPurpose, email: str) -> str:
+    return f"otp:cd:{purpose.value}:{email}"
+
+
+def _email_limit_key(email: str) -> str:
+    return f"rl:otp:email:{email}"
+
+
+def _ip_limit_key(ip: str) -> str:
+    return f"rl:otp:ip:{ip}"
 
 
 def _hash_code(purpose: OtpPurpose, email: str, code: str) -> str:
@@ -53,18 +73,28 @@ class EmailCodes:
         Raises AuthRateLimited during the resend cooldown or past the hourly limits.
         """
         email = normalize_email(email)
-        cooldown_key = f"otp:cd:{purpose.value}:{email}"
-        if not await self.redis.set(cooldown_key, "1", ex=RESEND_COOLDOWN_SECONDS, nx=True):
+        if not await self.redis.set(
+            _cooldown_key(purpose, email), "1", ex=RESEND_COOLDOWN_SECONDS, nx=True
+        ):
             raise AuthRateLimitedException("Please wait a minute before asking for a new code.")
         if not await rate_limit.hit(
-            self.redis, f"rl:otp:ip:{ip}", limit=MAX_CODES_PER_IP_PER_HOUR, window_seconds=HOUR
-        ) or not await rate_limit.hit(
+            self.redis, _ip_limit_key(ip), limit=MAX_CODES_PER_IP_PER_HOUR, window_seconds=HOUR
+        ):
+            await self.redis.delete(_cooldown_key(purpose, email))
+            raise AuthRateLimitedException(
+                "Too many codes from this connection. Please try again in an hour."
+            )
+        if not await rate_limit.hit(
             self.redis,
-            f"rl:otp:email:{email}",
+            _email_limit_key(email),
             limit=MAX_CODES_PER_EMAIL_PER_HOUR,
             window_seconds=HOUR,
         ):
-            raise AuthRateLimitedException()
+            await self.redis.delete(_cooldown_key(purpose, email))
+            await rate_limit.undo_hit(self.redis, _ip_limit_key(ip))
+            raise AuthRateLimitedException(
+                "Too many codes for this email. Please try again in an hour."
+            )
 
         code = new_code()
         key = _code_key(purpose, email)
@@ -74,6 +104,32 @@ class EmailCodes:
             pipe.expire(key, CODE_TTL_SECONDS)
             await pipe.execute()
         return code
+
+    async def release(self, purpose: OtpPurpose, email: str, *, ip: str) -> None:
+        """Undo `issue` after the email could not be sent: the code is dropped and the attempt
+        does not count against the cooldown or the hourly limits."""
+        email = normalize_email(email)
+        await self.redis.delete(_code_key(purpose, email), _cooldown_key(purpose, email))
+        await rate_limit.undo_hit(self.redis, _ip_limit_key(ip))
+        await rate_limit.undo_hit(self.redis, _email_limit_key(email))
+
+    async def deliver(
+        self,
+        client: EmailClient,
+        message: EmailMessage,
+        purpose: OtpPurpose,
+        *,
+        ip: str,
+    ) -> None:
+        """Send a code email made by `issue`. If the provider refuses it or cannot be reached,
+        the attempt is given back (`release`) and EmailSendError is raised."""
+        try:
+            await client.send(message)
+        except EmailSendError as exc:
+            await self.release(purpose, message.to, ip=ip)
+            # No address or code in the log: the error names the provider's problem.
+            logger.error("Could not send a %s code email: %s", purpose.value, exc)
+            raise
 
     async def verify(self, purpose: OtpPurpose, email: str, code: str) -> None:
         """Accept the code once. Raises CodeInvalid if it is wrong, used or expired.

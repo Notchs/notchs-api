@@ -144,3 +144,56 @@ def test_public_whatsapp_number_is_digits_with_country_code(number: str) -> None
         Settings(WHATSAPP_PUBLIC_NUMBER=number)
 
     assert Settings(WHATSAPP_PUBLIC_NUMBER="15556755530").WHATSAPP_PUBLIC_NUMBER == "15556755530"
+
+
+HTTPS_APPS = {
+    "VENUE_APP_URL": "https://venues.notchs.com",
+    "ADMIN_APP_URL": "https://admin.notchs.com",
+    "CUSTOMER_APP_URL": "https://notchs.com",
+}
+
+
+@pytest.mark.parametrize(
+    "sender",
+    ["Notchs <contact@notchs.com>", "contact@notchs.com", "  Team Notchs <no-reply@notchs.com> "],
+)
+def test_email_from_on_our_domain(sender: str) -> None:
+    settings = Settings(
+        ENVIRONMENT="staging",
+        **DEPLOYED,
+        **HTTPS_APPS,
+        EMAIL_DRY_RUN=False,
+        RESEND_API_KEY="re_x",
+        EMAIL_FROM=sender,
+    )
+
+    assert sender == settings.EMAIL_FROM
+
+
+@pytest.mark.parametrize(
+    ("sender", "error"),
+    [
+        ("Notchs <notchs.app@gmail.com>", "not gmail.com"),
+        ("notchs.app@GMAIL.com", "not gmail.com"),
+        ("Notchs <someone@yahoo.co.in>", "not yahoo.co.in"),
+        ("Notchs notchs.app@gmail.com", "must look like"),
+        ("Notchs", "must look like"),
+        ("Notchs <a@b@notchs.com>", "must look like"),
+    ],
+)
+def test_email_from_free_mail_or_malformed_is_refused(sender: str, error: str) -> None:
+    with pytest.raises(ValidationError, match=error):
+        Settings(
+            ENVIRONMENT="staging",
+            **DEPLOYED,
+            **HTTPS_APPS,
+            EMAIL_DRY_RUN=False,
+            RESEND_API_KEY="re_x",
+            EMAIL_FROM=sender,
+        )
+
+
+def test_email_from_is_not_checked_in_dry_run() -> None:
+    settings = Settings(ENVIRONMENT="staging", **DEPLOYED, **HTTPS_APPS, EMAIL_FROM="me@gmail.com")
+
+    assert settings.EMAIL_DRY_RUN

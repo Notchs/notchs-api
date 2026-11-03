@@ -58,6 +58,12 @@ class UnprocessableException(AppException):
     message = "The request could not be processed."
 
 
+class ServiceUnavailableException(AppException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    error_code = "service_unavailable"
+    message = "This is not available right now. Please try again in a few minutes."
+
+
 class TooManyRequestsException(AppException):
     status_code = status.HTTP_429_TOO_MANY_REQUESTS
     error_code = "rate_limited"

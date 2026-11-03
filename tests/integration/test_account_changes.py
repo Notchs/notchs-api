@@ -207,6 +207,24 @@ async def test_change_email(api: AsyncClient, outbox, owner) -> None:
     assert await refresh(api, owner["phone_rt"]) == 200  # sessions stay
 
 
+async def test_change_email_code_that_failed_to_send_is_given_back(
+    api: AsyncClient, outbox, owner
+) -> None:
+    new_email = f"new-{uuid.uuid4().hex[:6]}@kahwa.in"
+    outbox.fails = True
+
+    failed = await send_code(api, owner["at"], new_email)
+    outbox.fails = False
+    again = await send_code(api, owner["at"], new_email)  # no 1-minute wait
+    code_mail = outbox.sent[-1]
+    done = await verify(api, owner["at"], code_in(code_mail.text))
+
+    # The answer stays the same as for a taken address (it must not reveal which).
+    assert failed.status_code == again.status_code == 202
+    assert code_mail.to == new_email
+    assert done.status_code == 200, done.text
+
+
 async def test_change_email_wrong_password(api: AsyncClient, outbox, owner) -> None:
     sent = len(outbox.sent)
 

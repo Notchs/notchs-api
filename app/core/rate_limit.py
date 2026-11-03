@@ -25,3 +25,10 @@ async def is_limited(redis: Redis, key: str, *, limit: int) -> bool:
 
 async def reset(redis: Redis, key: str) -> None:
     await redis.delete(key)
+
+
+async def undo_hit(redis: Redis, key: str) -> None:
+    """Give back one hit, e.g. when the action it counted failed on our side. Never goes below
+    zero, and never leaves a key without its expiry (a key that expired meanwhile is removed)."""
+    if await redis.decr(key) <= 0:
+        await redis.delete(key)

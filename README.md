@@ -205,7 +205,7 @@ production refuse to start until the real values are set.
 | `ACCESS_TOKEN_TTL_MINUTES`, `REFRESH_TOKEN_TTL_DAYS` | Session lifetimes (15 minutes, 30 days). |
 | `TOTP_ENCRYPTION_KEY` | Fernet key that encrypts counter phones' code secrets. Required outside local/development. **Never change it without re-encrypting**: existing counters would stop working. |
 | `EMAIL_DRY_RUN` | `true`: log emails (with their codes and links) instead of sending. Must be `false` in production. |
-| `RESEND_API_KEY`, `EMAIL_FROM` | Resend account key and sender. Needed when `EMAIL_DRY_RUN=false`. |
+| `RESEND_API_KEY`, `EMAIL_FROM` | Resend account key and sender. Needed when `EMAIL_DRY_RUN=false`. `EMAIL_FROM` must be on the domain verified in Resend, written `Notchs <contact@notchs.com>`; staging and production refuse to start with a Gmail-style sender. A code email that Resend refuses is answered with 503 `email.send_failed` and does not count against the code limits. |
 | `VENUE_APP_URL`, `ADMIN_APP_URL`, `CUSTOMER_APP_URL` | Where links point, e.g. `https://venues.notchs.com`, `https://admin.notchs.com`, `https://notchs.com`. https outside local/development. |
 | `ADMIN_NOTIFY_EMAIL` | Optional. Gets a "New venue application" email (no applicant contact details in it). |
 | `TURNSTILE_SECRET` | Cloudflare Turnstile secret for the CAPTCHA on public forms. |

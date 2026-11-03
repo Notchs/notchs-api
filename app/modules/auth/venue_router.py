@@ -166,11 +166,10 @@ async def send_email_change_code(
     auth: VenueAuthServiceDep,
     email_client: EmailClientDep,
 ) -> CustomResponse[None]:
-    message = await auth.request_email_change(
-        member, body.new_email, body.current_password, ip=client_ip(request)
-    )
+    ip = client_ip(request)
+    message = await auth.request_email_change(member, body.new_email, body.current_password, ip=ip)
     if message is not None:
-        background.add_task(email_client.send, message)
+        background.add_task(auth.send_email_change_code, email_client, message, ip=ip)
     return CustomResponse(message="If this email can be used, a 6-digit code is on its way to it.")
 
 

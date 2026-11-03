@@ -136,6 +136,34 @@ async def test_resend_needs_a_minute(api: AsyncClient, email: str) -> None:
     assert again.json()["error"]["code"] == "auth.rate_limited"
 
 
+async def test_email_failure_is_reported_and_not_counted(
+    api: AsyncClient, outbox, email: str
+) -> None:
+    outbox.fails = True
+    failures = [await send_code(api, email) for _ in range(7)]  # more than the hourly limit
+    outbox.fails = False
+
+    sent = await send_code(api, email)  # straight away: no cooldown, no limit used up
+
+    assert {r.status_code for r in failures} == {503}
+    assert failures[0].json()["error"]["code"] == "email.send_failed"
+    assert sent.status_code == 202, sent.text
+    assert outbox.sent[-1].to == email
+
+
+async def test_a_code_that_never_arrived_cannot_be_used(
+    api: AsyncClient, outbox, email: str
+) -> None:
+    outbox.fails = True
+    await send_code(api, email)
+
+    response = await api.post(
+        "/venue-applications/email/verify", json={"email": email, "code": "000000"}
+    )
+
+    assert response.status_code == 400  # nothing was kept to guess against
+
+
 async def test_send_code_needs_the_captcha(api: AsyncClient, turnstile, outbox, email: str) -> None:
     turnstile.passes = False
 

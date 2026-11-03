@@ -2,6 +2,7 @@ from app.common.exceptions import (
     BadRequestException,
     ConflictException,
     ForbiddenException,
+    ServiceUnavailableException,
     TooManyRequestsException,
     UnauthorizedException,
     UnprocessableException,
@@ -27,6 +28,11 @@ class TokenInvalidException(BadRequestException):
 class CodeInvalidException(BadRequestException):
     error_code = "auth.code_invalid"
     message = "This code is wrong or has expired."
+
+
+class EmailSendFailedException(ServiceUnavailableException):
+    error_code = "email.send_failed"
+    message = "We couldn't send the email right now. Please try again in a few minutes."
 
 
 class AuthRateLimitedException(TooManyRequestsException):

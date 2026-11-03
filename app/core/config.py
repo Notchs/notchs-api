@@ -18,6 +18,40 @@ INSECURE_DEV_JWT_SECRET = "dev-only-insecure-jwt-secret-do-not-deploy"
 INSECURE_DEV_TOTP_KEY = "ZGV2LW9ubHktaW5zZWN1cmUtdG90cC1rZXktMDAwMDA="
 MIN_JWT_SECRET_LENGTH = 32
 _LIBPQ_ONLY_PARAMS = frozenset({"channel_binding"})
+# Free mailboxes nobody can verify as a sending domain: Resend refuses to send from them.
+FREE_MAIL_DOMAINS = frozenset(
+    {
+        "gmail.com",
+        "googlemail.com",
+        "yahoo.com",
+        "yahoo.co.in",
+        "outlook.com",
+        "hotmail.com",
+        "live.com",
+        "icloud.com",
+        "rediffmail.com",
+        "proton.me",
+        "protonmail.com",
+    }
+)
+_EMAIL_FROM = re.compile(
+    r"^(?:[^<>]+<(?P<wrapped>[^<>@\s]+@[^<>@\s]+)>|(?P<bare>[^<>@\s]+@[^<>@\s]+))$"
+)
+
+
+def check_email_from(value: str) -> None:
+    """`Notchs <contact@notchs.com>` or `contact@notchs.com`, on our own domain. A Gmail-style
+    sender makes every email fail at Resend, silently for the person waiting for it."""
+    match = _EMAIL_FROM.fullmatch(value.strip())
+    if match is None:
+        raise ValueError("EMAIL_FROM must look like: Notchs <contact@notchs.com>")
+    address = match.group("wrapped") or match.group("bare")
+    domain = address.rsplit("@", 1)[1].lower()
+    if domain in FREE_MAIL_DOMAINS:
+        raise ValueError(
+            "EMAIL_FROM must use the domain verified in Resend, e.g. "
+            f"Notchs <contact@notchs.com>, not {domain}: emails from it are refused"
+        )
 
 
 class Settings(BaseSettings):
@@ -168,6 +202,8 @@ class Settings(BaseSettings):
             raise ValueError("TURNSTILE_DISABLED is only allowed in local and development")
         if not self.EMAIL_DRY_RUN and self.RESEND_API_KEY is None:
             raise ValueError("RESEND_API_KEY is required when EMAIL_DRY_RUN is false")
+        if not self.EMAIL_DRY_RUN:
+            check_email_from(self.EMAIL_FROM)
         if self.is_production and self.WHATSAPP_DRY_RUN:
             raise ValueError("WHATSAPP_DRY_RUN must be false in production")
         if self.is_production and not (self.WHATSAPP_APP_SECRET and self.WHATSAPP_VERIFY_TOKEN):

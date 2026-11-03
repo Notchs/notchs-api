@@ -17,7 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from app.clients.email import EmailMessage, get_email_client
+from app.clients.email import EmailMessage, EmailSendError, get_email_client
 from app.clients.turnstile import get_turnstile_client
 from app.core.config import settings
 from app.core.redis import get_redis
@@ -98,12 +98,16 @@ async def db(db_engine, db_schema: str) -> AsyncIterator[AsyncSession]:
 
 
 class Outbox:
-    """Stands in for EmailClient: keeps what would have been sent."""
+    """Stands in for EmailClient: keeps what would have been sent. Set `fails` to act like the
+    email provider refusing every email (wrong sender, outage)."""
 
     def __init__(self) -> None:
         self.sent: list[EmailMessage] = []
+        self.fails = False
 
     async def send(self, message: EmailMessage) -> None:
+        if self.fails:
+            raise EmailSendError("Resend returned 403: not authorized to send from gmail.com")
         self.sent.append(message)
 
 

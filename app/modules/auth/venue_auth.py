@@ -1,6 +1,7 @@
 """Venue member accounts: login, set/forgot/change password (mechanics in password_auth.py),
 plus what is venue-specific: the venue itself, the welcome email and changing the login email."""
 
+import contextlib
 from dataclasses import dataclass
 
 from redis.asyncio import Redis
@@ -8,7 +9,7 @@ from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.clients.email import EmailMessage
+from app.clients.email import EmailClient, EmailMessage, EmailSendError
 from app.core.config import settings
 from app.modules.auth import messages
 from app.modules.auth.emails import is_disposable, normalize_email
@@ -124,6 +125,14 @@ class VenueAuthService:
         code = await self.codes.issue(OtpPurpose.EMAIL_CHANGE, new_email, ip=ip or "unknown")
         await self.redis.set(_pending_key(member), new_email, ex=PENDING_EMAIL_TTL_SECONDS)
         return messages.email_code_email(to=new_email, code=code, purpose=EMAIL_CHANGE_CODE_PURPOSE)
+
+    async def send_email_change_code(
+        self, client: EmailClient, message: EmailMessage, *, ip: str | None
+    ) -> None:
+        """Runs after the response (so it is the same for taken and free addresses). A send the
+        provider refuses is given back, so the member can ask again straight away."""
+        with contextlib.suppress(EmailSendError):  # logged by deliver()
+            await self.codes.deliver(client, message, OtpPurpose.EMAIL_CHANGE, ip=ip or "unknown")
 
     async def confirm_email_change(self, member: VenueMember, code: str) -> EmailMessage:
         """Step 2: check the code and switch the login email. Sessions stay. Returns the notice

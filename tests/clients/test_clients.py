@@ -50,6 +50,21 @@ async def test_sends_through_resend(live_email: None) -> None:
     }
 
 
+async def test_the_sent_log_has_no_address_or_code(
+    live_email: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    secret_message = EmailMessage(
+        to="owner@kahwa.in", subject="Your Notchs code: 482913", text="482913"
+    )
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"id": "email_42"}))
+    caplog.set_level("INFO")
+
+    await EmailClient(_http(transport)).send(secret_message)
+
+    assert "email_42" in caplog.text
+    assert "owner@kahwa.in" not in caplog.text and "482913" not in caplog.text
+
+
 async def test_resend_error_is_raised(live_email: None) -> None:
     transport = httpx.MockTransport(lambda _: httpx.Response(403, json={"message": "bad key"}))
 

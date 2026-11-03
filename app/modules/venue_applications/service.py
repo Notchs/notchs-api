@@ -1,6 +1,7 @@
 """The "apply as a venue" form: verify the email with a code, then submit.
 
-Emails are returned, not sent: the router sends them after the response.
+The code email is sent before answering (a failure is reported); the team's heads-up about a new
+application is returned, and the router sends it after the response.
 """
 
 from datetime import UTC, datetime
@@ -10,13 +11,13 @@ from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.clients.email import EmailMessage
+from app.clients.email import EmailClient, EmailMessage, EmailSendError
 from app.core import rate_limit
 from app.core.config import settings
 from app.modules.auth import messages as auth_messages
 from app.modules.auth.emails import is_disposable, normalize_email
 from app.modules.auth.enums import OtpPurpose
-from app.modules.auth.exceptions import EmailNotAllowedException
+from app.modules.auth.exceptions import EmailNotAllowedException, EmailSendFailedException
 from app.modules.auth.otp import EmailCodes
 from app.modules.locations.models import City
 from app.modules.venue_applications import messages
@@ -41,14 +42,23 @@ class VenueApplicationService:
         self.codes = EmailCodes(redis)
         self.redis = redis
 
-    async def send_code(self, email: str, *, ip: str | None) -> EmailMessage:
-        """Code for the application form. Sent whether or not the address is already in use,
-        so this cannot be used to find out who is registered (submit refuses duplicates)."""
+    async def send_code(self, email: str, *, ip: str | None, client: EmailClient) -> None:
+        """Email the code for the application form. Sent whether or not the address is already in
+        use, so this cannot be used to find out who is registered (submit refuses duplicates).
+
+        Sent before answering, so a failure is reported (EmailSendFailed) instead of the person
+        waiting for a code that never comes; a failed send does not count against the limits.
+        """
         email = normalize_email(email)
         if is_disposable(email):
             raise EmailNotAllowedException()
-        code = await self.codes.issue(OtpPurpose.APPLICATION, email, ip=ip or "unknown")
-        return auth_messages.email_code_email(to=email, code=code, purpose=CODE_PURPOSE_TEXT)
+        ip = ip or "unknown"
+        code = await self.codes.issue(OtpPurpose.APPLICATION, email, ip=ip)
+        message = auth_messages.email_code_email(to=email, code=code, purpose=CODE_PURPOSE_TEXT)
+        try:
+            await self.codes.deliver(client, message, OtpPurpose.APPLICATION, ip=ip)
+        except EmailSendError as exc:
+            raise EmailSendFailedException() from exc
 
     async def verify_code(self, email: str, code: str) -> str:
         """Check the code and return the verification token the form submits with."""

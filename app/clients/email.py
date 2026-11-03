@@ -66,7 +66,15 @@ class EmailClient:
         if response.is_error:
             # The body names the problem (bad key, unverified domain, ...) without the content.
             raise EmailSendError(f"Resend returned {response.status_code}: {response.text}")
-        logger.info("Email sent to %s (%s)", message.to, message.subject)
+        # No address or subject in the log: the subject can hold a login code.
+        logger.info("Email sent (Resend id %s)", _resend_id(response))
+
+
+def _resend_id(response: httpx.Response) -> str:
+    try:
+        return str(response.json().get("id", "unknown"))
+    except ValueError:
+        return "unknown"
 
 
 def get_email_client() -> EmailClient:
