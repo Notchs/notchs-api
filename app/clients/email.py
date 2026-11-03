@@ -49,7 +49,7 @@ class EmailClient:
             return
         if settings.SMTP_HOST:
             await asyncio.to_thread(_send_smtp, message)
-            logger.info("Email sent to %s through SMTP (%s)", message.to, message.subject)
+            logger.info("Email sent through SMTP")
             return
         if settings.RESEND_API_KEY is None:
             raise EmailSendError("RESEND_API_KEY is not set")
@@ -76,7 +76,8 @@ class EmailClient:
         if response.is_error:
             # The body names the problem (bad key, unverified domain, ...) without the content.
             raise EmailSendError(f"Resend returned {response.status_code}: {response.text}")
-        logger.info("Email sent to %s (%s)", message.to, message.subject)
+        # Never the address or the subject: subjects can hold a code (CLAUDE.md, security rules).
+        logger.info("Email sent through Resend")
 
 
 def _send_smtp(message: EmailMessage) -> None:

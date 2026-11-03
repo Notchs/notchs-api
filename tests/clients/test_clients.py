@@ -99,6 +99,18 @@ async def test_smtp_failures_are_send_errors(
         await EmailClient().send(MESSAGE)
 
 
+async def test_sent_emails_never_log_the_address_or_the_code(
+    smtp_email: type[FakeSmtp], live_email: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("INFO")
+
+    await EmailClient().send(MESSAGE)
+
+    assert smtp_email.sent
+    assert MESSAGE.to not in caplog.text
+    assert "123456" not in caplog.text
+
+
 async def test_dry_run_wins_over_smtp(
     smtp_email: type[FakeSmtp], monkeypatch: pytest.MonkeyPatch
 ) -> None:
