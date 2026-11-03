@@ -17,6 +17,14 @@ def _http(handler: httpx.MockTransport) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=handler)
 
 
+@pytest.fixture(autouse=True)
+def default_email_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The defaults, whatever a local .env says (e.g. EMAIL_DRY_RUN=false, SMTP_HOST=mailpit)."""
+    monkeypatch.setattr(settings, "EMAIL_DRY_RUN", True)
+    monkeypatch.setattr(settings, "SMTP_HOST", None)
+    monkeypatch.setattr(settings, "RESEND_API_KEY", None)
+
+
 @pytest.fixture
 def live_email(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "EMAIL_DRY_RUN", False)
@@ -99,14 +107,27 @@ async def test_smtp_failures_are_send_errors(
         await EmailClient().send(MESSAGE)
 
 
-async def test_sent_emails_never_log_the_address_or_the_code(
-    smtp_email: type[FakeSmtp], live_email: None, caplog: pytest.LogCaptureFixture
+async def test_smtp_never_logs_the_address_or_the_code(
+    smtp_email: type[FakeSmtp], caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level("INFO")
 
     await EmailClient().send(MESSAGE)
 
     assert smtp_email.sent
+    assert MESSAGE.to not in caplog.text
+    assert "123456" not in caplog.text
+
+
+async def test_resend_never_logs_the_address_or_the_code(
+    live_email: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("INFO")
+    ok = httpx.MockTransport(lambda _: httpx.Response(200, json={"id": "email_1"}))
+
+    await EmailClient(_http(ok)).send(MESSAGE)
+
+    assert "Email sent through Resend" in caplog.text
     assert MESSAGE.to not in caplog.text
     assert "123456" not in caplog.text
 
