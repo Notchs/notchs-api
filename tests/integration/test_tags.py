@@ -419,7 +419,7 @@ async def test_after_agreeing_the_next_visit_gets_the_menu(db, bot_under_test, m
         db, bot_under_test, user.phone_e164, CONSENT_BUTTON.title, button_id=CONSENT_BUTTON.id
     )
     meta.sent.clear()
-    venue, secret = await add_venue(db)
+    venue, secret = await add_venue(db, category="restaurant")  # a café was earlier today
     db.add(VenueItem(venue_id=venue.id, tag_id=tag.id, position=0))
     await db.commit()
 

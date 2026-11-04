@@ -319,7 +319,7 @@ What the bot replies:
 |---|---|
 | Their first message | Creates the customer (the phone number is their identity) |
 | `LOGIN`, or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes). If they have not agreed yet, the consent question instead |
-| A scan: `Hey Notchs!, get me notched. KAHWA-482913` | Counts the visit: stamp, notch number, points and a login link. Or says why not (wrong or expired code, already notched today, daily limit); the same refusal at most once a minute |
+| A scan: `Hey Notchs!, get me notched. KAHWA-482913` | Counts the visit: stamp, notch number, points and a login link. Or says why not (wrong or expired code, already notched today, already a Notch in this niche today); the same refusal at most once a minute |
 | The scan sentence with no code | No stamp, a login link |
 | Taps **I agree, I'm 18+** | Records the privacy consent and 18+ confirmation, replies with a login link |
 | Picks from the **What did you try?** menu (sent after a stamp, once they have agreed, if the venue has items) | Saves the answer for that visit, up to 24 hours later. Several answers are fine. No points |

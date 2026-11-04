@@ -1,7 +1,7 @@
 """The scan pipeline: one scan message becomes a visit with points, or a rejection with a reason.
 
     customer active -> venue exists -> venue live -> live code right and current
-    -> not here already today -> under the venues-per-day limit -> code not overused
+    -> not here already today -> no Notch in this niche today -> code not overused
     -> visit + points
 
 Every outcome is saved as one `scan_sessions` row. Nothing here commits: the caller owns the
@@ -32,6 +32,7 @@ from app.modules.scans.models import (
     ScanStatus,
     Visit,
 )
+from app.modules.scans.niches import niche_of
 from app.modules.scans.parser import Scan
 from app.modules.scans.repository import ScanRepository
 from app.modules.users.models import User, UserStatus
@@ -39,20 +40,18 @@ from app.modules.venues.models import CounterDevice, Venue, VenueStatus
 
 logger = get_logger(__name__)
 
-MAX_VENUES_PER_DAY = 4
 MAX_PEOPLE_PER_CODE = 5
 # Failed guesses per customer, so nobody can try codes over WhatsApp until one works.
 MAX_WRONG_CODES = 10
 WRONG_CODE_WINDOW_SECONDS = 15 * 60
 
-VISIT_POINTS = 10
 NEW_VENUE_POINTS = 2
 EVERY_THIRD_VISIT_POINTS = 2
 
 
-def visit_points(visit_no_at_venue: int) -> list[tuple[PointsReason, int]]:
-    """What the customer's Nth visit to a venue earns."""
-    points = [(PointsReason.VISIT, VISIT_POINTS)]
+def visit_points(visit_no_at_venue: int, category: str) -> list[tuple[PointsReason, int]]:
+    """What the customer's Nth visit to a venue of this niche earns."""
+    points = [(PointsReason.VISIT, niche_of(category).visit_points)]
     if visit_no_at_venue == 1:
         points.append((PointsReason.NEW_VENUE, NEW_VENUE_POINTS))
     if visit_no_at_venue % 3 == 0:
@@ -124,7 +123,7 @@ class ScanService:
             return await self._reject(
                 user, message_id, scan, RejectReason.ALREADY_TODAY, now, venue, counter
             )
-        if await self.repository.count_valid_visits_on(user.id, today) >= MAX_VENUES_PER_DAY:
+        if await self.repository.has_niche_visit_on(user.id, venue.category, today):
             return await self._reject(
                 user, message_id, scan, RejectReason.DAILY_LIMIT, now, venue, counter
             )
@@ -191,7 +190,7 @@ class ScanService:
         self.session.add(visit)
         await self.session.flush()
 
-        earned = visit_points(visit_no)
+        earned = visit_points(visit_no, venue.category)
         self.session.add_all(
             PointsEntry(user_id=user.id, visit_id=visit.id, reason=reason, points=points)
             for reason, points in earned

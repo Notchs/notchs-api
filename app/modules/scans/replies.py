@@ -3,7 +3,6 @@
 from app.modules.auth.enums import TokenType
 from app.modules.auth.tokens import lifetime
 from app.modules.scans.models import RejectReason
-from app.modules.scans.service import MAX_VENUES_PER_DAY
 
 LINK_MINUTES = int(lifetime(TokenType.MAGIC_LINK).total_seconds() // 60)
 _LINK_LINE = f"It works once and expires in {LINK_MINUTES} minutes:\n{{link}}"
@@ -52,8 +51,11 @@ def no_code_text(link: str | None) -> str:
     )
 
 
-def rejection_text(reason: RejectReason, venue_name: str | None) -> str | None:
-    """None: no reply at all (blocked customers)."""
+def rejection_text(
+    reason: RejectReason, venue_name: str | None, niche_label: str | None = None
+) -> str | None:
+    """None: no reply at all (blocked customers). `niche_label` names the venue's niche
+    ("café") for the one-per-niche refusal."""
     place = venue_name or "this venue"
     match reason:
         case RejectReason.WRONG_CODE:
@@ -63,9 +65,10 @@ def rejection_text(reason: RejectReason, venue_name: str | None) -> str | None:
         case RejectReason.ALREADY_TODAY:
             return f"You're already notched at {place} today. Come back tomorrow!"
         case RejectReason.DAILY_LIMIT:
+            niche = niche_label or "place"
             return (
-                f"You've collected {MAX_VENUES_PER_DAY} stamps today, the daily limit. "
-                "See you tomorrow!"
+                f"You already have today's {niche} Notch. One {niche} a day counts, "
+                "so this one won't. See you tomorrow!"
             )
         case RejectReason.CODE_USED:
             return "Lots of people just scanned. Wait 30 seconds and scan again."
