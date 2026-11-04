@@ -13,6 +13,7 @@ from app.modules.tags.router import admin_router as admin_tags_router
 from app.modules.tags.router import venue_router as venue_tags_router
 from app.modules.venue_applications.admin_router import router as admin_applications_router
 from app.modules.venue_applications.router import router as venue_applications_router
+from app.modules.venue_insights.router import router as venue_insights_router
 from app.modules.venues.counter_router import display_router, owner_router
 from app.modules.whatsapp.dev_router import router as whatsapp_dev_router
 from app.modules.whatsapp.router import router as whatsapp_router
@@ -31,6 +32,7 @@ api_router.include_router(passport_router)
 api_router.include_router(admin_tags_router)
 api_router.include_router(venue_tags_router)
 api_router.include_router(owner_router)
+api_router.include_router(venue_insights_router)
 api_router.include_router(display_router)
 api_router.include_router(whatsapp_router)
 api_router.include_router(whatsapp_dev_router)
