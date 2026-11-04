@@ -18,7 +18,7 @@ from app.modules.auth.customer_auth import MAX_LINKS_PER_WINDOW, CustomerAuthSer
 from app.modules.auth.models import AuthToken
 from app.modules.scans import replies, service, verifier
 from app.modules.scans.models import PointsEntry, RejectReason, ScanSession, Visit
-from app.modules.scans.service import MAX_PEOPLE_PER_CODE, MAX_VENUES_PER_DAY
+from app.modules.scans.service import MAX_PEOPLE_PER_CODE
 from app.modules.users.consent import CONSENT_VERSION, consent_text
 from app.modules.users.models import User, UserStatus
 from app.modules.venues.models import Venue, VenueStatus
@@ -468,17 +468,19 @@ async def test_already_notched_reply_names_the_venue(db, bot_under_test, meta) -
     assert await visits_of(db, user) == 1
 
 
-async def test_daily_limit_reply(db, bot_under_test, meta) -> None:
+async def test_one_per_niche_reply_names_the_niche(db, bot_under_test, meta) -> None:
     user = await add_customer(db)
-    for _ in range(MAX_VENUES_PER_DAY):
-        venue, secret = await add_venue(db)
-        await receive(db, bot_under_test, user.phone_e164, scan_text(venue, code_now(secret)))
-    venue, secret = await add_venue(db)
-
+    venue, secret = await add_venue(db, category="restaurant")
     await receive(db, bot_under_test, user.phone_e164, scan_text(venue, code_now(secret)))
+    other, other_secret = await add_venue(db, category="restaurant")
 
-    assert meta.texts()[-1] == replies.rejection_text(RejectReason.DAILY_LIMIT, None)
-    assert await visits_of(db, user) == MAX_VENUES_PER_DAY
+    await receive(db, bot_under_test, user.phone_e164, scan_text(other, code_now(other_secret)))
+
+    assert meta.texts()[-1] == (
+        "You already have today's restaurant Notch. One restaurant a day counts, "
+        "so this one won't. See you tomorrow!"
+    )
+    assert await visits_of(db, user) == 1
 
 
 async def test_code_used_reply(db, bot_under_test, meta, monkeypatch) -> None:

@@ -68,19 +68,20 @@ class ScanRepository:
         )
         return found is not None
 
-    async def count_valid_visits_on(self, user_id: uuid.UUID, day: date) -> int:
-        return (
-            await self.session.scalar(
-                select(func.count())
-                .select_from(Visit)
-                .where(
-                    Visit.user_id == user_id,
-                    Visit.visit_date == day,
-                    Visit.status == VisitStatus.VALID,
-                )
+    async def has_niche_visit_on(self, user_id: uuid.UUID, category: str, day: date) -> bool:
+        """A counted visit today at any venue of this niche (one Notch per niche per day)."""
+        found = await self.session.scalar(
+            select(Visit.id)
+            .join(Venue, Venue.id == Visit.venue_id)
+            .where(
+                Visit.user_id == user_id,
+                Visit.visit_date == day,
+                Visit.status == VisitStatus.VALID,
+                Venue.category == category,
             )
-            or 0
+            .limit(1)
         )
+        return found is not None
 
     async def count_code_uses(self, venue_id: uuid.UUID, slot: int, since: datetime) -> int:
         """Visits at this venue from one live code. `since` keeps the query on the venue/time

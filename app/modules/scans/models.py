@@ -39,7 +39,7 @@ class VerificationLevel(StrEnum):
 
 
 class PointsReason(StrEnum):
-    VISIT = "visit"  # +10, every counted visit
+    VISIT = "visit"  # every counted visit; the niche sets how much (niches.py)
     NEW_VENUE = "new_venue"  # +2, the first visit to a venue
     EVERY_THIRD_VISIT = "every_third_visit"  # +2, the 3rd, 6th, 9th... visit to the same venue
     ADJUSTMENT = "adjustment"  # an admin's correction (may be negative)
@@ -57,7 +57,7 @@ class RejectReason(StrEnum):
     EXPIRED_CODE = "expired_code"  # a real code, but too old
     CODE_USED = "code_used"  # this code was used by too many people
     ALREADY_TODAY = "already_today"  # one stamp per venue per day
-    DAILY_LIMIT = "daily_limit"  # too many venues today
+    DAILY_LIMIT = "daily_limit"  # already notched in this niche today (another venue)
     BLOCKED_CUSTOMER = "blocked_customer"
 
 

@@ -11,11 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.common import crypto
 from app.modules.locations.models import City
 from app.modules.scans import verifier
-from app.modules.scans.models import PointsEntry, RejectReason, ScanSession, ScanStatus, Visit
+from app.modules.scans.models import (
+    PointsEntry,
+    RejectReason,
+    ScanSession,
+    ScanStatus,
+    Visit,
+    VisitStatus,
+)
 from app.modules.scans.parser import Scan
 from app.modules.scans.service import (
     MAX_PEOPLE_PER_CODE,
-    MAX_VENUES_PER_DAY,
     MAX_WRONG_CODES,
     ScanResult,
     ScanService,
@@ -58,10 +64,9 @@ async def add_venue(session: AsyncSession, **fields) -> tuple[Venue, str]:
         city_id=city.id,
         name="Kahwa House",
         slug="kahwa-house",
-        category="cafe",
         scan_code=code,
         status=VenueStatus.COUNTER_LIVE,
-        **fields,
+        **({"category": "cafe"} | fields),
     )
     session.add(venue)
     await session.flush()
@@ -180,7 +185,7 @@ async def test_points_over_repeat_visits(db, redis, customer, live) -> None:
 
 async def test_notch_numbers_run_per_venue(db, redis, live) -> None:
     venue, secret = live
-    other, other_secret = await add_venue(db)
+    other, other_secret = await add_venue(db, category="restaurant")  # a café was earlier today
     first = await find_or_create_customer(db, phone(), "A")
     second = await find_or_create_customer(db, phone(), "B")
 
@@ -387,18 +392,39 @@ async def test_the_day_turns_at_midnight_in_india(db, redis, customer, live) -> 
     assert second.visit.visit_date == date(2026, 11, 3)
 
 
-async def test_venues_per_day_limit(db, redis, customer) -> None:
-    for _ in range(MAX_VENUES_PER_DAY):
-        venue, secret = await add_venue(db)
-        assert (await send(db, redis, customer, venue, live_code(secret))).verified
-    venue, secret = await add_venue(db)
+async def test_one_notch_per_niche_per_day(db, redis, customer) -> None:
+    cafe, secret = await add_venue(db)
+    assert (await send(db, redis, customer, cafe, live_code(secret))).verified
+    other_cafe, other_secret = await add_venue(db)
 
-    result = await send(db, redis, customer, venue, live_code(secret))
+    result = await send(db, redis, customer, other_cafe, live_code(other_secret))
 
     await assert_rejected(db, result, RejectReason.DAILY_LIMIT)
+    assert await points_of(db, customer) == 12
     tomorrow = NOW + timedelta(days=1)
-    next_day = await send(db, redis, customer, venue, live_code(secret, tomorrow), now=tomorrow)
+    code = live_code(other_secret, tomorrow)
+    next_day = await send(db, redis, customer, other_cafe, code, now=tomorrow)
     assert next_day.verified
+
+
+async def test_other_niches_count_the_same_day(db, redis, customer) -> None:
+    for category in ("cafe", "restaurant", "turf_gym"):
+        venue, secret = await add_venue(db, category=category)
+        assert (await send(db, redis, customer, venue, live_code(secret))).verified
+
+    assert await points_of(db, customer) == 3 * 12
+
+
+async def test_a_revoked_notch_frees_the_niche(db, redis, customer) -> None:
+    cafe, secret = await add_venue(db)
+    first = await send(db, redis, customer, cafe, live_code(secret))
+    first.visit.status = VisitStatus.REVOKED
+    await db.flush()
+    other_cafe, other_secret = await add_venue(db)
+
+    result = await send(db, redis, customer, other_cafe, live_code(other_secret))
+
+    assert result.verified
 
 
 async def test_one_code_is_shared_by_a_limited_number_of_people(db, redis, live) -> None:

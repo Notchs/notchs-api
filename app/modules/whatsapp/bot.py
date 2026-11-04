@@ -45,6 +45,7 @@ from app.modules.auth.tokens import lifetime
 from app.modules.leaderboards.service import LeaderboardService, Period
 from app.modules.locations.models import City
 from app.modules.scans import replies
+from app.modules.scans.niches import niche_of
 from app.modules.scans.parser import NoCode, Scan, parse
 from app.modules.scans.service import ScanResult, ScanService
 from app.modules.tags.models import Tag
@@ -240,7 +241,11 @@ class WhatsAppBot:
             await self._stamp(session, sender, user, result, venue)
             return
         assert result.reject_reason is not None
-        text = replies.rejection_text(result.reject_reason, venue.name if venue else None)
+        text = replies.rejection_text(
+            result.reject_reason,
+            venue.name if venue else None,
+            niche_of(venue.category).label if venue else None,
+        )
         if text is not None and await self._notice_allowed(
             f"scan_{result.reject_reason.value}", user, SCAN_NOTICE_EVERY_SECONDS
         ):
