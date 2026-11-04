@@ -11,6 +11,9 @@ from app.db.base import Entity, in_values
 from app.modules.users.handles import HANDLE_REGEX, random_handle
 
 MAX_FOUNDING_MEMBER_NO = 500
+# Instagram usernames: letters, digits, dots and underscores, at most 30. Stored lowercase,
+# without the "@".
+INSTAGRAM_REGEX = r"^[a-z0-9._]{1,30}$"
 
 
 class UserTheme(StrEnum):
@@ -34,6 +37,7 @@ class User(Entity):
         CheckConstraint(in_values("theme", UserTheme), name="theme_valid"),
         CheckConstraint(in_values("status", UserStatus), name="status_valid"),
         CheckConstraint(f"handle ~ '{HANDLE_REGEX}'", name="handle_format"),
+        CheckConstraint(f"instagram_handle ~ '{INSTAGRAM_REGEX}'", name="instagram_handle_format"),
     )
 
     # Login identity, e.g. +919876543210. Never shown to venues.
@@ -63,6 +67,11 @@ class User(Entity):
     )
     status: Mapped[str] = mapped_column(
         String(12), default=UserStatus.ACTIVE, server_default=UserStatus.ACTIVE.value, index=True
+    )
+    # Given on the website. Venues see it only while `show_instagram_to_venues` is on.
+    instagram_handle: Mapped[str | None] = mapped_column(String(30))
+    show_instagram_to_venues: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
     )
     # Last scan or app open.
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
