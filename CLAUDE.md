@@ -46,7 +46,9 @@ alembic heads          # exactly one head
   customer's phone number** to venue, public or admin-list endpoints unless the team agreed to that endpoint. Venues get totals only.
 - Public endpoints (forms, waitlist, venue applications) need a Turnstile check, a rate
   limit (`app/core/rate_limit.py`), Pydantic validation with length limits, and generic
-  error messages that don't reveal whether an account or number exists.
+  error messages that don't reveal whether an account or number exists. One exception, agreed
+  by the team on 5 Nov 2026: the venue application's email step (`send-code`) says when an
+  email already has a pending application or a venue login, capped per connection.
 - Compare secrets, tokens and codes with `hmac.compare_digest`. Tokens are single-use and
   expire. Login cookies are HttpOnly, Secure and SameSite.
 - Database access only through SQLAlchemy and the repository layer. Never build SQL from
