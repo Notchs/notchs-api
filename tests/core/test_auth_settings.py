@@ -33,18 +33,6 @@ def test_production_must_send_real_email() -> None:
         Settings(ENVIRONMENT="production", **DEPLOYED, EMAIL_DRY_RUN=True)
 
 
-@pytest.mark.parametrize("environment", ["staging", "production"])
-def test_deployed_email_never_goes_to_mailpit(environment: str) -> None:
-    with pytest.raises(ValidationError, match="SMTP_HOST"):
-        Settings(
-            ENVIRONMENT=environment,
-            **DEPLOYED,
-            EMAIL_DRY_RUN=False,
-            RESEND_API_KEY="re_x",
-            SMTP_HOST="mailpit",
-        )
-
-
 def test_real_email_needs_an_api_key() -> None:
     with pytest.raises(ValidationError, match="RESEND_API_KEY"):
         Settings(ENVIRONMENT="staging", **DEPLOYED, EMAIL_DRY_RUN=False)

@@ -35,14 +35,6 @@ services:
       timeout: 3s
       retries: 10
 
-  # Catches every email locally, with a web inbox at http://localhost:8025. Delivers nothing.
-  # Used when .env has EMAIL_DRY_RUN=false and SMTP_HOST=mailpit.
-  mailpit:
-    image: axllent/mailpit:v1.27
-    ports:
-      - "127.0.0.1:8025:8025"
-      - "127.0.0.1:1025:1025"
-
   # Optional offline Postgres: `docker compose --profile local-db up`, and in .env set
   # DATABASE_URL=postgresql://postgres:postgres@db:5432/notchs, empty
   # MIGRATION_DATABASE_URL and DB_USE_POOLER=false.
