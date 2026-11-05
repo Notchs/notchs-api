@@ -12,6 +12,9 @@ from app.core.config import settings
 from app.modules.locations.models import City, CityStatus
 from app.modules.venue_applications.models import ApplicationStatus, VenueApplication
 from app.modules.venue_applications.service import MAX_APPLICATIONS_PER_IP_PER_DAY
+from app.modules.venue_applications.service import (
+    MAX_TAKEN_ANSWERS_PER_IP_PER_HOUR as MAX_TAKEN_ANSWERS,
+)
 from app.modules.venues.models import Venue, VenueMember
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -200,15 +203,80 @@ async def test_unknown_city(api: AsyncClient, outbox, city: City, email: str) ->
 async def test_one_pending_application_per_email(
     api: AsyncClient, db: AsyncSession, redis, outbox, city: City, email: str
 ) -> None:
+    """Submit is the safety net: here the second form was verified before the first was sent,
+    as with two tabs open."""
     first = await verified_token(api, outbox, email)
-    assert (await submit(api, form(first, city))).status_code == 201
-
     await redis.delete(f"otp:cd:application:{email}")  # skip the resend minute
     second = await verified_token(api, outbox, email)
+    assert (await submit(api, form(first, city))).status_code == 201
+
     duplicate = await submit(api, form(second, city, venue_name="Kahwa 2"))
 
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["code"] == "applications.duplicate"
+
+
+async def test_email_step_says_an_application_is_pending(
+    api: AsyncClient, redis, outbox, city: City, email: str
+) -> None:
+    token = await verified_token(api, outbox, email)
+    assert (await submit(api, form(token, city))).status_code == 201
+    await redis.delete(f"otp:cd:application:{email}")
+    sent = len(outbox.sent)
+
+    response = await send_code(api, email.upper())
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "applications.pending"
+    assert len(outbox.sent) == sent  # no code for a taken address
+
+
+async def test_email_step_says_the_email_has_a_venue_login(
+    api: AsyncClient, db: AsyncSession, outbox, city: City, email: str
+) -> None:
+    venue = Venue(city_id=city.id, name="Kahwa", slug=f"k-{uuid.uuid4().hex[:6]}", category="cafe")
+    db.add(venue)
+    await db.flush()
+    db.add(VenueMember(venue_id=venue.id, phone_e164="+919800000001", name="R", email=email))
+    await db.commit()
+
+    response = await send_code(api, email)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "applications.email_registered"
+    assert outbox.sent == []
+
+
+async def test_taken_answers_are_limited_per_connection(
+    api: AsyncClient, db: AsyncSession, redis, outbox, city: City
+) -> None:
+    venue = Venue(city_id=city.id, name="Kahwa", slug=f"k-{uuid.uuid4().hex[:6]}", category="cafe")
+    db.add(venue)
+    await db.flush()
+    taken = [f"taken{i}-{uuid.uuid4().hex[:4]}@kahwa.in" for i in range(MAX_TAKEN_ANSWERS)]
+    for n, address in enumerate(taken):
+        db.add(
+            VenueMember(venue_id=venue.id, phone_e164=f"+91980000010{n}", name="R", email=address)
+        )
+    await db.commit()
+    for address in taken:
+        assert (await send_code(api, address)).status_code == 409
+
+    free = await send_code(api, f"free-{uuid.uuid4().hex[:4]}@kahwa.in")
+
+    # The limit answers before any lookup, so it says nothing about the address it was given.
+    assert free.status_code == 429
+    assert free.json()["error"]["code"] == "applications.check_rate_limited"
+
+
+async def test_free_addresses_do_not_count_towards_the_taken_limit(
+    api: AsyncClient, redis, outbox
+) -> None:
+    for _ in range(MAX_TAKEN_ANSWERS + 1):
+        response = await send_code(api, f"free-{uuid.uuid4().hex[:6]}@kahwa.in")
+        assert response.status_code == 202
+
+    assert await redis.get("rl:apply:taken:ip:203.0.113.7") is None
 
 
 async def test_rejected_applicants_may_apply_again(
@@ -232,13 +300,15 @@ async def test_existing_venue_login_cannot_apply(
     venue = Venue(city_id=city.id, name="Kahwa", slug=f"k-{uuid.uuid4().hex[:6]}", category="cafe")
     db.add(venue)
     await db.flush()
+    token = await verified_token(api, outbox, email)
+    # The login appears after the email step: submit is the safety net.
     db.add(VenueMember(venue_id=venue.id, phone_e164="+919800000001", name="R", email=email))
     await db.commit()
-    token = await verified_token(api, outbox, email)  # the code is still sent: no enumeration
 
     response = await submit(api, form(token, city))
 
     assert response.status_code == 409
+    assert response.json()["error"]["code"] == "applications.duplicate"
 
 
 async def test_daily_limit_per_ip(api: AsyncClient, redis, outbox, city: City) -> None:
