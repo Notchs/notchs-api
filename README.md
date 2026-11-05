@@ -205,7 +205,8 @@ production refuse to start until the real values are set.
 | `ACCESS_TOKEN_TTL_MINUTES`, `REFRESH_TOKEN_TTL_DAYS` | Session lifetimes (15 minutes, 30 days). |
 | `TOTP_ENCRYPTION_KEY` | Fernet key that encrypts counter phones' code secrets. Required outside local/development. **Never change it without re-encrypting**: existing counters would stop working. |
 | `EMAIL_DRY_RUN` | `true`: log emails (with their codes and links) instead of sending. Must be `false` in production. |
-| `RESEND_API_KEY`, `EMAIL_FROM` | Resend account key and sender. Needed when `EMAIL_DRY_RUN=false`. |
+| `RESEND_API_KEY`, `EMAIL_FROM` | Resend account key and sender. Needed when `EMAIL_DRY_RUN=false`, unless `SMTP_HOST` is set. |
+| `SMTP_HOST`, `SMTP_PORT` | Local and development only: send to this server instead of Resend. Set `SMTP_HOST=mailpit` with `EMAIL_DRY_RUN=false` to read every email at http://localhost:8025. Mailpit delivers nothing. |
 | `VENUE_APP_URL`, `ADMIN_APP_URL`, `CUSTOMER_APP_URL` | Where links point, e.g. `https://venues.notchs.com`, `https://admin.notchs.com`, `https://notchs.com`. https outside local/development. |
 | `ADMIN_NOTIFY_EMAIL` | Optional. Gets a "New venue application" email (no applicant contact details in it). |
 | `TURNSTILE_SECRET` | Cloudflare Turnstile secret for the CAPTCHA on public forms. |
@@ -244,7 +245,8 @@ Venue app endpoints (all under `/api/v1`):
 | `POST /venue/me/email/send-code` | `{new_email, current_password}` | Logged in. Emails a 6-digit code to the new address. Always `202`. |
 | `POST /venue/me/email/verify` | `{code}` | Logged in. Switches the login email; the old address gets a notice. |
 
-Locally, emails are written to the API log (`EMAIL_DRY_RUN=true`), so copy links from there.
+Locally, emails are written to the API log (`EMAIL_DRY_RUN=true`), so copy links from there, or
+read them in Mailpit at http://localhost:8025 (`EMAIL_DRY_RUN=false`, `SMTP_HOST=mailpit`).
 
 "Apply as a venue" form (public, no login):
 

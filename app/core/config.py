@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     EMAIL_DRY_RUN: bool = True
     RESEND_API_KEY: SecretStr | None = None
     EMAIL_FROM: str = "Notchs <no-reply@notchs.com>"
+    # Local and development only: send to this SMTP server (Mailpit) instead of Resend.
+    SMTP_HOST: str | None = None
+    SMTP_PORT: int = 1025
 
     # Where emailed links point: the venue app's /set-password page, for example.
     VENUE_APP_URL: str = "http://localhost:3000"
@@ -166,6 +169,8 @@ class Settings(BaseSettings):
             raise ValueError("TOTP_ENCRYPTION_KEY must be set to a real Fernet key")
         if self.TURNSTILE_DISABLED:
             raise ValueError("TURNSTILE_DISABLED is only allowed in local and development")
+        if self.SMTP_HOST:
+            raise ValueError("SMTP_HOST is only allowed in local and development")
         if not self.EMAIL_DRY_RUN and self.RESEND_API_KEY is None:
             raise ValueError("RESEND_API_KEY is required when EMAIL_DRY_RUN is false")
         if self.is_production and self.WHATSAPP_DRY_RUN:
