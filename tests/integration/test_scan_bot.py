@@ -331,7 +331,12 @@ async def test_no_second_consent_question_once_agreed(db, bot_under_test, meta) 
 
 
 @pytest.mark.parametrize(
-    "tap", [{"body": "LOGIN"}, {"body": "Login link", "button_id": LOGIN_BUTTON.id}]
+    "tap",
+    [
+        {"body": "LOGIN"},
+        {"body": "Hey Notchs, I want to login"},
+        {"body": "Login link", "button_id": LOGIN_BUTTON.id},
+    ],
 )
 async def test_login_before_agreeing_asks_the_question_and_makes_no_link(
     db, bot_under_test, meta, tap
@@ -340,6 +345,21 @@ async def test_login_before_agreeing_asks_the_question_and_makes_no_link(
 
     await receive(db, bot_under_test, user.phone_e164, **tap)
 
+    assert meta.texts() == [consent_text()]
+    assert meta.buttons() == [CONSENT_BUTTON.id]
+    links = await db.scalar(
+        select(func.count()).select_from(AuthToken).where(AuthToken.user_id == user.id)
+    )
+    assert links == 0
+
+
+async def test_a_new_number_signs_up_with_the_websites_message(db, bot_under_test, meta) -> None:
+    sender = phone()
+
+    await receive(db, bot_under_test, sender, "Hey Notchs, I want to login")
+
+    user = await db.scalar(select(User).where(User.phone_e164 == sender))
+    assert user is not None and user.consent_at is None  # the account, not yet agreed
     assert meta.texts() == [consent_text()]
     assert meta.buttons() == [CONSENT_BUTTON.id]
     links = await db.scalar(

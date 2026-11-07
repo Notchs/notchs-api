@@ -212,7 +212,13 @@ async def test_tapping_an_unknown_button_gets_help(
 
 
 @pytest.mark.parametrize(
-    ("body", "kind"), [("LOGIN", "text"), ("  login ", "text"), ("Login", "button")]
+    ("body", "kind"),
+    [
+        ("LOGIN", "text"),
+        ("  login ", "text"),
+        ("Login", "button"),
+        ("Hey Notchs, I want to login", "text"),
+    ],
 )
 async def test_login_replies_with_a_working_link(
     api: AsyncClient, db: AsyncSession, real_bot: WhatsAppBot, meta: FakeMeta, body: str, kind: str

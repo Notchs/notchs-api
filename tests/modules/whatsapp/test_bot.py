@@ -3,7 +3,7 @@
 import pytest
 
 from app.common.phone import masked_phone
-from app.modules.whatsapp.bot import LOGIN_BUTTON, is_login
+from app.modules.whatsapp.bot import LOGIN_BUTTON, LOGIN_MESSAGE, is_login
 from app.modules.whatsapp.models import WhatsAppMessage
 
 
@@ -57,6 +57,35 @@ def test_login(body: str, kind: str) -> None:
 )
 def test_not_login(body: str | None, kind: str) -> None:
     assert not is_login(incoming(body, kind))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        LOGIN_MESSAGE,
+        "hey notchs, i want to login",
+        "Hey Notchs! I want to log in.",
+        "  HEY   NOTCHS,  I WANT TO LOGIN \n",
+        "Hi Notchs, I want to login",
+        "Notchs, I want to login",
+    ],
+)
+def test_the_websites_login_message(body: str) -> None:
+    assert is_login(incoming(body))
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Hey Notchs, I want to login and also my last visit was not counted",
+        "Hey Notchs, I don't want to login",
+        "I want to login",  # without "Notchs" it could be about anything
+        "Hey Notchs!, get me notched.",  # the scan sentence
+        "Hey Notchs!, get me notched. KAHWA-482913",
+    ],
+)
+def test_other_sentences_are_not_login(body: str) -> None:
+    assert not is_login(incoming(body))
 
 
 def test_phone_numbers_are_masked_in_logs() -> None:
