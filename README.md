@@ -272,7 +272,10 @@ Pairing gives the counter a new secret, so a replaced phone's codes stop working
 moves the venue from `signed` to `counter_live`.
 
 Customer site (`nx_user_*` cookies): customers log in with the link the WhatsApp bot sends after
-they type LOGIN. The link opens `/login/verify?token=...`; that page must `POST /auth/customer/consume`
+they type LOGIN, or send what the website's "Continue with WhatsApp" button pre-types,
+`Hey Notchs, I want to login` (open `https://wa.me/<WhatsApp number>?text=Hey%20Notchs%2C%20I%20want%20to%20login`).
+New numbers get an account and the consent question first, the same as a first scan.
+The link opens `/login/verify?token=...`; that page must `POST /auth/customer/consume`
 with `{token}` (opening the link alone does nothing, so WhatsApp's link preview can't use it up).
 The link works once and expires after 15 minutes.
 
@@ -320,7 +323,7 @@ What the bot replies:
 | Customer sends | Bot |
 |---|---|
 | Their first message | Creates the customer (the phone number is their identity) |
-| `LOGIN`, or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes). If they have not agreed yet, the consent question instead |
+| `LOGIN`, `Hey Notchs, I want to login` (pre-typed by the website), or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes). If they have not agreed yet, the consent question instead |
 | A scan: `Hey Notchs!, get me notched. KAHWA-482913` | Counts the visit: stamp, notch number, points and a login link. Or says why not (wrong or expired code, already notched today, already a Notch in this niche today); the same refusal at most once a minute |
 | The scan sentence with no code | No stamp, a login link |
 | Taps **I agree, I'm 18+** | Records the privacy consent and 18+ confirmation, replies with a login link |

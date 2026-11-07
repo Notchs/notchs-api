@@ -1,8 +1,9 @@
 """What the bot does with one incoming WhatsApp message.
 
     every message   find the customer by phone, or create them (their first message is sign-up)
-    LOGIN           reply with a single-use passport login link (3 per 15 minutes); typed, or a
-                    tap on the help reply's "Login link" button
+    LOGIN           reply with a single-use passport login link (3 per 15 minutes); typed, the
+                    website's pre-typed "Hey Notchs, I want to login", or a tap on the help
+                    reply's "Login link" button
     "I agree" tap   record the privacy consent and 18+ confirmation, reply with a login link
     a scan          count the visit or refuse it (scans module), then reply; "KAHWA-482913"
     menu tap        save what they tried, for 24 hours after the visit; no points
@@ -24,6 +25,7 @@ replies twice, and scanning again answers "already notched today".
 All replies answer the customer's own message, so they fall inside WhatsApp's free 24-hour window.
 """
 
+import re
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -64,6 +66,10 @@ from app.modules.whatsapp.webhook import button_id_of
 logger = get_logger(__name__)
 
 LOGIN_COMMAND = "LOGIN"
+# What the website's "Continue with WhatsApp" button pre-types (wa.me/<number>?text=...).
+LOGIN_MESSAGE = "Hey Notchs, I want to login"
+# The same sentence however it was punctuated or capitalised, with or without the greeting.
+_LOGIN_MESSAGE = re.compile(r"(?:(?:hey|hi|hello) )?notchs i want to log ?in")
 # Help and "too many links" replies: each at most once per customer per window, so nobody is
 # flooded. Separate windows: a help reply never silences the "too many links" answer.
 NOTICE_EVERY_SECONDS = 10 * 60
@@ -138,10 +144,13 @@ def is_login(message: WhatsAppMessage) -> bool:
         button_id_of(message.payload) == LOGIN_BUTTON.id
     ):
         return True
-    return (
-        message.message_type in (MessageType.TEXT, MessageType.BUTTON)
-        and (message.body or "").strip().upper() == LOGIN_COMMAND
-    )
+    if message.message_type not in (MessageType.TEXT, MessageType.BUTTON):
+        return False
+    body = message.body or ""
+    if body.strip().upper() == LOGIN_COMMAND:
+        return True
+    words = re.sub(r"[^a-z0-9]+", " ", body.lower()).strip()
+    return _LOGIN_MESSAGE.fullmatch(words) is not None
 
 
 async def find_or_create_customer(
