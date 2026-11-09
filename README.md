@@ -325,6 +325,7 @@ What the bot replies:
 | Their first message | Creates the customer (the phone number is their identity) |
 | `LOGIN`, `Hey Notchs, I want to login` (pre-typed by the website), or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes). If they have not agreed yet, the consent question instead |
 | A scan: `Hey Notchs!, get me notched. KAHWA-482913` | Counts the visit: stamp, notch number, points and a login link. Or says why not (wrong or expired code, already notched today, already a Notch in this niche today); the same refusal at most once a minute |
+| `CHANGE 123456` from a new number (code from `POST /me/phone-change`, 10 minutes, works once) | Moves the customer's account to that number. Refused if the number already has its own account; never creates one. Wrong codes: 5 per number per 15 minutes |
 | The scan sentence with no code | No stamp, a login link |
 | Taps **I agree, I'm 18+** | Records the privacy consent and 18+ confirmation, replies with a login link |
 | Picks from the **What did you try?** menu (sent after a stamp, once they have agreed, if the venue has items) | Saves the answer for that visit, up to 24 hours later. Several answers are fine. No points |
