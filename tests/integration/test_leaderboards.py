@@ -61,7 +61,7 @@ async def ledger_visit(
         user_id=user.id,
         venue_id=venue.id,
         scan_session_id=scan.id,
-        visit_date=at.date(),
+        visit_date=ist_date(at),  # the day in India, as the app counts it
         visited_at=at,
         notch_no=uuid.uuid4().int % 10**8 + 1,
         visit_no_at_venue=1,

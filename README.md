@@ -290,6 +290,12 @@ Admin panel (`nx_admin_*` cookies): `POST /admin/auth/login`, `/admin/auth/set-p
 | `POST /admin/venue-applications/{ref}/approve` | admin | Body (all optional): `area_id`, `address`, `latitude` + `longitude`. Creates the venue (`signed`) and the owner's login, then emails the set-password link. |
 | `POST /admin/venue-applications/{ref}/reject` | admin | Body: `reason`, `notify` (default `true` emails the applicant). |
 
+Admin Settings (`/admin/users`, role `admin` only): `GET` lists every admin; `POST {name, email, role}`
+adds one and emails a set-password link; `PATCH /{ADM-code} {role?, is_active?}` changes the role
+or turns them off (which logs them out at once); `POST /{ADM-code}/link` emails a new link. Nobody
+can remove their own admin access and there is always an active admin. The CLI below is only
+needed for the very first admin.
+
 ## Command-line tasks
 
 ```bash
