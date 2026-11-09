@@ -23,6 +23,7 @@ from app.common import crypto
 from app.common.time import ist_date
 from app.core import rate_limit
 from app.core.logging import get_logger
+from app.modules.referrals.service import reward_first_notch
 from app.modules.scans import verifier
 from app.modules.scans.models import (
     PointsEntry,
@@ -30,6 +31,7 @@ from app.modules.scans.models import (
     RejectReason,
     ScanSession,
     ScanStatus,
+    VerificationLevel,
     Visit,
 )
 from app.modules.scans.niches import niche_of
@@ -175,17 +177,34 @@ class ScanService:
         )
         self.session.add(scan_session)
         await self.session.flush()
+        visit, earned = await self.add_visit(user, venue, scan_session, visited_at=now, slot=slot)
+        logger.info("Scan %s verified at venue %s", scan_session.id, venue.venue_code)
+        return ScanResult(scan_session, visit, earned)
 
+    async def add_visit(
+        self,
+        user: User,
+        venue: Venue,
+        scan_session: ScanSession,
+        *,
+        visited_at: datetime,
+        slot: int | None,
+        level: VerificationLevel = VerificationLevel.BASIC,
+    ) -> tuple[Visit, int]:
+        """Count one visit and give its points: a verified scan, or an approved bill claim
+        (`slot` None, `level` verified). The caller has checked the daily limits and holds the
+        customer's lock, then the venue's, so the venue's Notch numbers stay exact."""
         visit_no = await self.repository.count_valid_visits_at(user.id, venue.id) + 1
         visit = Visit(
             user_id=user.id,
             venue_id=venue.id,
             scan_session_id=scan_session.id,
-            visit_date=ist_date(now),
-            visited_at=now,
+            visit_date=ist_date(visited_at),
+            visited_at=visited_at,
             notch_no=await self.repository.last_notch_no(venue.id) + 1,
             visit_no_at_venue=visit_no,
             code_slot=slot,
+            verification_level=level,
         )
         self.session.add(visit)
         await self.session.flush()
@@ -198,9 +217,9 @@ class ScanService:
         if user.city_id is None:
             user.city_id = venue.city_id
         await self.session.flush()
-
-        logger.info("Scan %s verified at venue %s", scan_session.id, venue.venue_code)
-        return ScanResult(scan_session, visit, sum(points for _, points in earned))
+        # Their inviter, if any, gets Star Points for this first real Notch (referrals module).
+        await reward_first_notch(self.session, user.id, now=visited_at)
+        return visit, sum(points for _, points in earned)
 
     async def _reject(
         self,

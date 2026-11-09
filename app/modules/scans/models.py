@@ -4,8 +4,8 @@
     visits          one verified Notch: a customer at a venue on an IST day (one per day)
     points_ledger   every point given, with the reason; the source of truth for ranks
 
-whatsapp message -> scan_session -> visit (visits.scan_session_id). Proofs (bill photos, later)
-attach to the scan session.
+whatsapp message -> scan_session -> visit (visits.scan_session_id). An approved bill-photo claim
+(claims module) is a scan session for the photo's message, with no code.
 """
 
 import uuid
@@ -35,7 +35,7 @@ class VisitStatus(StrEnum):
 
 class VerificationLevel(StrEnum):
     BASIC = "basic"  # the live code from the counter phone
-    VERIFIED = "verified"  # a bill was checked too (open decision, not used yet)
+    VERIFIED = "verified"  # an admin checked a bill photo (claims module)
 
 
 class PointsReason(StrEnum):
@@ -129,8 +129,9 @@ class Visit(Entity):
     notch_no: Mapped[int] = mapped_column(Integer)
     # This customer's 1st, 2nd... visit here (the venue sees this, never the phone number).
     visit_no_at_venue: Mapped[int] = mapped_column(Integer)
-    # The live code's time slot (TOTP), to stop one code being used by many people.
-    code_slot: Mapped[int] = mapped_column(BigInteger)
+    # The live code's time slot (TOTP), to stop one code being used by many people. Null for a
+    # visit from an approved bill-photo claim (no code).
+    code_slot: Mapped[int | None] = mapped_column(BigInteger)
     verification_level: Mapped[str] = mapped_column(
         String(10), default=VerificationLevel.BASIC, server_default=VerificationLevel.BASIC.value
     )

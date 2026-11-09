@@ -7,11 +7,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from app.common.dependencies import DBSession
+from app.common.dependencies import DBSession, RedisClient
 from app.common.schemas import CustomResponse, PaginatedResponse
 from app.modules.auth.dependencies import CurrentUser
-from app.modules.passport.schemas import MeOut, MeUpdate, NotchOut, RewardOut
+from app.modules.passport.exceptions import PhoneChangeRateLimitedException
+from app.modules.passport.schemas import MeOut, MeUpdate, NotchOut, PhoneChangeOut, RewardOut
 from app.modules.passport.service import PassportService
+from app.modules.users.phone_change import COMMAND, PhoneChangeService
 
 router = APIRouter(prefix="/me", tags=["Passport"])
 
@@ -60,3 +62,24 @@ async def notches(
 )
 async def reward(user: CurrentUser, passport: PassportDep) -> CustomResponse[RewardOut]:
     return CustomResponse(message="OK", data=await passport.reward(user))
+
+
+@router.post(
+    "/phone-change",
+    response_model=CustomResponse[PhoneChangeOut],
+    summary="A code to move my account to a new number: send it from that number on WhatsApp",
+)
+async def phone_change(
+    user: CurrentUser, session: DBSession, redis: RedisClient
+) -> CustomResponse[PhoneChangeOut]:
+    started = await PhoneChangeService(session, redis).start(user)
+    if started is None:
+        raise PhoneChangeRateLimitedException()
+    return CustomResponse(
+        message="Send this from your new number within 10 minutes.",
+        data=PhoneChangeOut(
+            message=f"{COMMAND} {started.code}",
+            expires_at=started.expires_at,
+            whatsapp_link=started.whatsapp_link,
+        ),
+    )

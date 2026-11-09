@@ -171,6 +171,7 @@ Rules for the shared DB:
 | `venues` | `venue_code` | `VEN` |
 | `admin_users` | `admin_user_code` | `ADM` |
 | `venue_applications` | `application_code` | `APP` |
+| `visit_claims` | `claim_code` | `CLM` |
 
 Add a row here when a new table gets a code. A prefix is never reused or changed.
 
@@ -325,7 +326,10 @@ What the bot replies:
 | Their first message | Creates the customer (the phone number is their identity) |
 | `LOGIN`, `Hey Notchs, I want to login` (pre-typed by the website), or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes). If they have not agreed yet, the consent question instead |
 | A scan: `Hey Notchs!, get me notched. KAHWA-482913` | Counts the visit: stamp, notch number, points and a login link. Or says why not (wrong or expired code, already notched today, already a Notch in this niche today); the same refusal at most once a minute |
+| `CHANGE 123456` from a new number (code from `POST /me/phone-change`, 10 minutes, works once) | Moves the customer's account to that number. Refused if the number already has its own account; never creates one. Wrong codes: 5 per number per 15 minutes |
 | The scan sentence with no code | No stamp, a login link |
+| `CLAIM CLM-7K3M9QX2` (pre-typed by the passport's claim link) | "Now send the bill photo". Or says the photo already came, or that no open claim has that code (at most once a minute) |
+| A photo | Goes to their claim waiting for a photo today (or the one named in the caption): "we'll check it soon". With no such claim: how to start one (at most once a minute) |
 | Taps **I agree, I'm 18+** | Records the privacy consent and 18+ confirmation, replies with a login link |
 | Picks from the **What did you try?** menu (sent after a stamp, once they have agreed, if the venue has items) | Saves the answer for that visit, up to 24 hours later. Several answers are fine. No points |
 | Anything else | A short help message with a **🔑 Login link** button (at most once every 10 minutes) |
@@ -349,6 +353,28 @@ POST /api/v1/dev/simulate-inbound
 The text goes through the same steps as a real WhatsApp message, and the response lists the
 bot's replies (`data.replies`, buttons shown as `[title]` lines), login links included.
 Nothing is sent to Meta.
+
+## Bill-photo claims
+
+When a counter phone is down, a customer can still get the Notch: they start a claim in their
+passport, send `CLAIM CLM-...` and then a photo of the bill on WhatsApp, the same day (India time),
+and an admin checks it. Notchs stores only WhatsApp's id for the photo, never the photo; the admin
+screen fetches it from WhatsApp when opened. **WhatsApp keeps media about 30 days**, so claims must be
+checked within that time. An approved claim is a normal visit with points, marked `verified`.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /me/claims/venues?q=` | Logged-in customer | Live places by name (2–60 characters), up to 10 |
+| `POST /me/claims` | Logged-in customer | `{venue_code}`. A `CLM-` code and a WhatsApp link pre-typed with `CLAIM CLM-...`. Up to 3 a day; one per place a day; not where they already have a Notch today, or one of that kind |
+| `GET /me/claims` | Logged-in customer | Their last 20 claims: `awaiting_photo`, `expired` (no photo that day), `in_review`, `approved` (with the Notch number) or `rejected` (with the reason) |
+| `GET /admin/claims?status=in_review` | admin, reviewer | Oldest first. The customer's handle, never their number, and when the counter phone last checked in |
+| `GET /admin/claims/{code}` | admin, reviewer | One claim |
+| `GET /admin/claims/{code}/photo` | admin, reviewer | The image, fetched from WhatsApp now (`Cache-Control: no-store`). 410 once WhatsApp no longer has it, or in dry-run mode |
+| `POST /admin/claims/{code}/approve` | admin, reviewer | Checks the day's limits again, then adds the visit |
+| `POST /admin/claims/{code}/reject` | admin, reviewer | `{reason}` (3–200 characters), shown to the customer |
+
+The customer hears the result on WhatsApp only while that is a free reply (within 24 hours of their
+own last message); otherwise it shows in their passport. No paid templates.
 
 ## Leaderboards
 

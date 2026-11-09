@@ -86,3 +86,12 @@ class RewardOut(BaseSchema):
     needed: int
     eligible: bool
     value_rupees: int
+
+
+class PhoneChangeOut(BaseSchema):
+    """Send `message` to Notchs on WhatsApp from the new number (the link pre-types it)."""
+
+    message: str
+    expires_at: datetime
+    # None until the Notchs WhatsApp number is set up.
+    whatsapp_link: str | None

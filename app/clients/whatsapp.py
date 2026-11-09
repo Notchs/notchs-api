@@ -88,3 +88,67 @@ class WhatsAppClient:
 def get_whatsapp_client() -> WhatsAppClient:
     """FastAPI dependency. Override it in tests."""
     return WhatsAppClient()
+
+
+# Bill photos (claims module). WhatsApp images are at most 5 MB.
+MAX_MEDIA_BYTES = 5 * 1024 * 1024
+PHOTO_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
+
+
+@dataclass(frozen=True, slots=True)
+class Media:
+    content: bytes
+    mime_type: str
+
+
+class WhatsAppMediaError(Exception):
+    """The photo could not be fetched. `code`: "gone" (WhatsApp no longer has it, after about
+    30 days), "not_configured" (dry run, or no access token), "not_a_photo", "too_large",
+    "network" or "bad_response"."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"WhatsApp media fetch failed ({code})")
+        self.code = code
+
+
+async def download_media(media_id: str, http: httpx.AsyncClient | None = None) -> Media:
+    """An image a customer sent, from Meta: first its short-lived download URL, then the file.
+    https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media"""
+    if settings.WHATSAPP_DRY_RUN or settings.WHATSAPP_ACCESS_TOKEN is None:
+        raise WhatsAppMediaError("not_configured")
+    headers = {"Authorization": f"Bearer {settings.WHATSAPP_ACCESS_TOKEN.get_secret_value()}"}
+    meta_url = f"{settings.WHATSAPP_GRAPH_URL}/{settings.WHATSAPP_API_VERSION}/{media_id}"
+    owned = http is None
+    client = http or httpx.AsyncClient(timeout=TIMEOUT_SECONDS)
+    try:
+        response = await client.get(meta_url, headers=headers)
+        if response.status_code in (400, 404, 410):
+            raise WhatsAppMediaError("gone")
+        if response.is_error:
+            raise WhatsAppMediaError("bad_response")
+        try:
+            info = response.json()
+            url, mime_type = str(info["url"]), str(info["mime_type"]).split(";")[0].strip()
+            size = int(info.get("file_size") or 0)
+        except (ValueError, KeyError, TypeError) as exc:
+            raise WhatsAppMediaError("bad_response") from exc
+        if mime_type not in PHOTO_TYPES:
+            raise WhatsAppMediaError("not_a_photo")
+        if size > MAX_MEDIA_BYTES:
+            raise WhatsAppMediaError("too_large")
+        if not url.startswith("https://"):
+            raise WhatsAppMediaError("bad_response")
+        # The token is only sent to Meta's own download link, and redirects are not followed.
+        file = await client.get(url, headers=headers, follow_redirects=False)
+        if file.status_code in (404, 410):
+            raise WhatsAppMediaError("gone")
+        if file.status_code != 200:
+            raise WhatsAppMediaError("bad_response")
+        if len(file.content) > MAX_MEDIA_BYTES:
+            raise WhatsAppMediaError("too_large")
+        return Media(file.content, mime_type)
+    except httpx.HTTPError as exc:
+        raise WhatsAppMediaError("network") from exc
+    finally:
+        if owned:
+            await client.aclose()
