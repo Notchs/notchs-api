@@ -9,6 +9,7 @@ from app.modules.dropdowns.router import router as dropdowns_router
 from app.modules.health.router import router as health_router
 from app.modules.leaderboards.router import router as leaderboards_router
 from app.modules.passport.router import router as passport_router
+from app.modules.referrals.router import router as referrals_router
 from app.modules.tags.router import admin_router as admin_tags_router
 from app.modules.tags.router import venue_router as venue_tags_router
 from app.modules.venue_applications.admin_router import router as admin_applications_router
@@ -29,6 +30,7 @@ api_router.include_router(admin_auth_router)
 api_router.include_router(admin_applications_router)
 api_router.include_router(leaderboards_router)
 api_router.include_router(passport_router)
+api_router.include_router(referrals_router)
 api_router.include_router(admin_tags_router)
 api_router.include_router(venue_tags_router)
 api_router.include_router(owner_router)

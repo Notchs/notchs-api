@@ -23,6 +23,7 @@ from app.common import crypto
 from app.common.time import ist_date
 from app.core import rate_limit
 from app.core.logging import get_logger
+from app.modules.referrals.service import reward_first_notch
 from app.modules.scans import verifier
 from app.modules.scans.models import (
     PointsEntry,
@@ -198,6 +199,8 @@ class ScanService:
         if user.city_id is None:
             user.city_id = venue.city_id
         await self.session.flush()
+        # Their inviter, if any, gets Star Points for this first real Notch (referrals module).
+        await reward_first_notch(self.session, user.id, now=now)
 
         logger.info("Scan %s verified at venue %s", scan_session.id, venue.venue_code)
         return ScanResult(scan_session, visit, sum(points for _, points in earned))
