@@ -83,3 +83,8 @@ class CustomerStatusTarget(StrEnum):
 
 class CustomerStatusIn(BaseSchema):
     status: CustomerStatusTarget
+
+
+class CustomerDeleteIn(BaseSchema):
+    # The customer's handle typed again, so the wrong account can't be deleted by a slip.
+    confirm: str = Field(min_length=3, max_length=30)

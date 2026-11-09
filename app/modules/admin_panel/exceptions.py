@@ -1,4 +1,4 @@
-from app.common.exceptions import ConflictException, NotFoundException
+from app.common.exceptions import ConflictException, NotFoundException, UnprocessableException
 
 
 class AdminVenueNotFoundException(NotFoundException):
@@ -24,3 +24,8 @@ class AdminStatusChangeNotAllowedException(ConflictException):
 class AdminCounterNotPairedException(ConflictException):
     error_code = "admin.counter_not_paired"
     message = "Pair the venue's counter phone first; pairing puts the venue live."
+
+
+class AdminDeleteNotConfirmedException(UnprocessableException):
+    error_code = "admin.delete_not_confirmed"
+    message = "Type the customer's handle exactly to confirm."

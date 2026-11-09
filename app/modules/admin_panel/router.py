@@ -11,6 +11,7 @@ from app.modules.admin_panel.schemas import (
     AdminCustomerRow,
     AdminNotchRow,
     AdminVenueRow,
+    CustomerDeleteIn,
     CustomerStatusIn,
     OverviewOut,
     RevokeIn,
@@ -130,3 +131,18 @@ async def set_customer_status(
 ) -> CustomResponse[None]:
     await panel.set_customer_status(admin, handle, body.status)
     return CustomResponse(message="Saved.")
+
+
+@router.post(
+    "/customers/{handle}/delete",
+    response_model=CustomResponse[None],
+    summary="Delete a customer's account for good, when they ask support (type their handle)",
+)
+async def delete_customer_account(
+    handle: Annotated[str, Path(pattern=r"^[a-z0-9._]{3,30}$")],
+    body: CustomerDeleteIn,
+    admin: CurrentFullAdmin,
+    panel: PanelDep,
+) -> CustomResponse[None]:
+    await panel.delete_customer(admin, handle, body.confirm)
+    return CustomResponse(message="Deleted. Their visits stay, anonymous.")

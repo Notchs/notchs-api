@@ -3,7 +3,7 @@
 import re
 import uuid
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator
 
@@ -95,3 +95,8 @@ class PhoneChangeOut(BaseSchema):
     expires_at: datetime
     # None until the Notchs WhatsApp number is set up.
     whatsapp_link: str | None
+
+
+class DeleteMeIn(BaseSchema):
+    # Typed by the customer, so a stray click can't delete an account.
+    confirm: Literal["DELETE"]
