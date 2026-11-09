@@ -62,11 +62,10 @@ async def add_venue(session: AsyncSession, **fields) -> tuple[Venue, str]:
     await session.flush()
     venue = Venue(
         city_id=city.id,
-        name="Kahwa House",
         slug="kahwa-house",
         scan_code=code,
         status=VenueStatus.COUNTER_LIVE,
-        **({"category": "cafe"} | fields),
+        **({"name": "Kahwa House", "category": "cafe"} | fields),
     )
     session.add(venue)
     await session.flush()
