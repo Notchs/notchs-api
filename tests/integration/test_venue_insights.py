@@ -82,6 +82,9 @@ async def test_overview_counts_this_range_against_the_last(
     assert activity["unique_guests"] == 2
     assert (activity["returning_rate"], activity["returning_rate_previous"]) == (50, 0)
     assert len(activity["days"]) == 7
+    assert len(activity["previous_days"]) == 7
+    assert sum(day["visits"] for day in activity["previous_days"]) == 1
+    assert activity["previous_days"][-1]["day"] < activity["days"][0]["day"]
     assert sum(day["visits"] for day in activity["days"]) == 2
     assert data["stage"] == "first_days"
     assert data["first_days"] == {"verified_visits": 3, "target": 10}
@@ -141,6 +144,8 @@ async def test_guests_are_numbers_never_people(api: AsyncClient, db, owner) -> N
         (1, "regular", 5),
     ]
     assert data["guests"][1]["average_gap_days"] == 1.0
+    assert data["guests"][1]["days_to_second_visit"] == 1.0
+    assert data["guests"][0]["days_to_second_visit"] is None
     assert len(data["month_labels"]) == 6 and len(data["guests"][0]["visits_by_month"]) == 6
     for secret in (first.phone_e164, second.phone_e164, "Riya", "Asha", first.handle):
         assert secret not in response.text
