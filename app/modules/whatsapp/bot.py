@@ -10,6 +10,8 @@
     a scan          count the visit or refuse it (scans module), then reply; "KAHWA-482913"
     menu tap        save what they tried, for 24 hours after the visit; no points
     no code         the scan sentence from a QR away from a venue: no stamp, a login link
+    CLAIM CLM-...   a bill-photo claim started on the website: "now send the photo"
+    a photo         goes to the customer's claim waiting for one today (claims module)
     anything else   a short help reply with that button, at most once every 10 minutes per customer
 
 Customers who have not agreed yet never get a link: they get the consent question instead, and
@@ -46,6 +48,8 @@ from app.modules.auth.customer_auth import LINK_WINDOW_SECONDS, CustomerAuthServ
 from app.modules.auth.enums import TokenType
 from app.modules.auth.exceptions import AuthRateLimitedException, TokenInvalidException
 from app.modules.auth.tokens import lifetime
+from app.modules.claims import service as claims
+from app.modules.claims.service import ClaimService, PhotoOutcome, PromptOutcome
 from app.modules.leaderboards.service import LeaderboardService, Period
 from app.modules.locations.models import City
 from app.modules.scans import replies
@@ -111,6 +115,26 @@ PHONE_CHANGE_REPLIES = {
     ),
     PhoneChangeOutcome.LIMITED: "Too many tries. Please wait 15 minutes and try again.",
 }
+# Bill-photo claims (claims module), for when the counter phone wasn't working.
+CLAIM_SEND_PHOTO = (
+    "Now send a clear photo of your bill from {venue}, today. It should show the place's name, "
+    "the date and the total."
+)
+CLAIM_IN_REVIEW = (
+    "We already have your bill from {venue}. We'll check it soon: the result shows in your "
+    "passport."
+)
+CLAIM_UNKNOWN = (
+    "We couldn't find an open claim with that code. A claim works on the day it's started: "
+    "start a new one from your passport."
+)
+CLAIM_PHOTO_RECEIVED = (
+    "Got it! We'll check your bill from {venue} soon. The result shows in your passport."
+)
+CLAIM_NO_CLAIM = (
+    "Thanks for the photo. If the counter phone wasn't working, start a claim in your passport "
+    "first, then send the bill photo here."
+)
 # A menu row's id: try:<visit id>:<tag id>, so tapping an old menu updates the right visit.
 TRY_ROW_PREFIX = "try"
 
@@ -226,6 +250,15 @@ class WhatsAppBot:
         tried = parse_try_row(message)
         if tried is not None:
             await self._tried(session, sender, user, *tried)
+            return
+        claim_code = (
+            claims.parse_command(message.body) if message.message_type == MessageType.TEXT else None
+        )
+        if claim_code is not None:
+            await self._claim_prompt(session, sender, user, claim_code)
+            return
+        if message.message_type == MessageType.IMAGE:
+            await self._claim_photo(session, sender, user, message)
             return
         scan = parse(message.body) if message.message_type == MessageType.TEXT else None
         if isinstance(scan, Scan):
@@ -383,6 +416,37 @@ class WhatsAppBot:
             f"try_{result.outcome.value}", user, SCAN_NOTICE_EVERY_SECONDS
         ):
             await sender.send_text(user.phone_e164, text, user_id=user.id)
+
+    async def _claim_prompt(
+        self, session: AsyncSession, sender: WhatsAppSender, user: User, claim_code: str
+    ) -> None:
+        result = await ClaimService(session, self.redis).prompt(user, claim_code, datetime.now(UTC))
+        match result.outcome:
+            case PromptOutcome.SEND_PHOTO:
+                text = CLAIM_SEND_PHOTO.format(venue=result.venue_name)
+            case PromptOutcome.IN_REVIEW:
+                text = CLAIM_IN_REVIEW.format(venue=result.venue_name)
+            case PromptOutcome.UNKNOWN:
+                if not await self._notice_allowed("claim_unknown", user, SCAN_NOTICE_EVERY_SECONDS):
+                    return
+                text = CLAIM_UNKNOWN
+        await sender.send_text(user.phone_e164, text, user_id=user.id)
+
+    async def _claim_photo(
+        self,
+        session: AsyncSession,
+        sender: WhatsAppSender,
+        user: User,
+        message: WhatsAppMessage,
+    ) -> None:
+        result = await ClaimService(session, self.redis).attach_photo(user, message)
+        if result.outcome == PhotoOutcome.ATTACHED:
+            text = CLAIM_PHOTO_RECEIVED.format(venue=result.venue_name)
+        elif await self._notice_allowed("claim_no_claim", user, SCAN_NOTICE_EVERY_SECONDS):
+            text = CLAIM_NO_CLAIM
+        else:
+            return
+        await sender.send_text(user.phone_e164, text, user_id=user.id)
 
     async def _no_code(self, session: AsyncSession, sender: WhatsAppSender, user: User) -> None:
         if not await self._notice_allowed("no_code", user, SCAN_NOTICE_EVERY_SECONDS):

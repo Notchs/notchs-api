@@ -5,6 +5,8 @@ from fastapi import APIRouter
 from app.modules.auth.admin_router import router as admin_auth_router
 from app.modules.auth.router import router as auth_router
 from app.modules.auth.venue_router import router as venue_auth_router
+from app.modules.claims.router import admin_router as admin_claims_router
+from app.modules.claims.router import router as claims_router
 from app.modules.dropdowns.router import router as dropdowns_router
 from app.modules.health.router import router as health_router
 from app.modules.leaderboards.router import router as leaderboards_router
@@ -31,6 +33,8 @@ api_router.include_router(admin_applications_router)
 api_router.include_router(leaderboards_router)
 api_router.include_router(passport_router)
 api_router.include_router(referrals_router)
+api_router.include_router(claims_router)
+api_router.include_router(admin_claims_router)
 api_router.include_router(admin_tags_router)
 api_router.include_router(venue_tags_router)
 api_router.include_router(owner_router)
