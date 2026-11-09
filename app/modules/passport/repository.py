@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from datetime import date
 from typing import Any
 
-from sqlalchemy import Row, distinct, func, select
+from sqlalchemy import Row, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.locations.models import Area
@@ -20,7 +20,8 @@ class PassportRepository:
         self.session = session
 
     async def totals(self, user_id: uuid.UUID) -> tuple[int, int, int]:
-        """Counted Notchs, places, and points (adjustments included)."""
+        """Counted Notchs, places, and points: adjustments count, points of removed (revoked)
+        Notchs don't, as on the leaderboard."""
         notches, places = (
             await self.session.execute(
                 select(func.count(), func.count(distinct(Visit.venue_id))).where(
@@ -29,8 +30,11 @@ class PassportRepository:
             )
         ).one()
         points = await self.session.scalar(
-            select(func.coalesce(func.sum(PointsEntry.points), 0)).where(
-                PointsEntry.user_id == user_id
+            select(func.coalesce(func.sum(PointsEntry.points), 0))
+            .outerjoin(Visit, Visit.id == PointsEntry.visit_id)
+            .where(
+                PointsEntry.user_id == user_id,
+                or_(Visit.id.is_(None), Visit.status == VisitStatus.VALID),
             )
         )
         return notches, places, points or 0
