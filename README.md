@@ -383,6 +383,12 @@ the city the visit happened in. Postgres (`points_ledger`) is the truth: boards 
 at startup and every `LEADERBOARD_REBUILD_INTERVAL_SECONDS`, so an emptied Redis repairs itself. To
 do it now: `python -m app.cli rebuild-leaderboards`.
 
+**Rank decay** (team decision, provisional; the rate is ours, in `app/modules/leaderboards/decay.py`):
+after 15 days without a Notch, the points that count for rank drop 10% a week (day 16: 90%, day 23:
+80%... down to 0%), and the next Notch brings them all back. The points a customer earned never
+change: the passport shows them all and `points_ledger` is untouched, so changing the rule only takes
+a rebuild. `GET /leaderboards/me` returns `rank_points_percent` and `rank_drops_on`.
+
 Everyone with points is ranked and equal points share a rank. Customers are private by default: they
 keep their place, but their row has no name or handle until they choose to be public.
 

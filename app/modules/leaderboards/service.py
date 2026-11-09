@@ -3,9 +3,13 @@
     lb:<city id>:all        all-time points
     lb:<city id>:<YYYY-MM>  this month's points (India time); old months expire
 
-Points go on the board of the city the visit happened in. A counted visit adds to both boards right
-after it commits. If Redis misses one (a crash, a restart, an empty Redis) ranks would be wrong, so
-`rebuild` replaces the boards from the ledger: at startup, every hour and from the CLI.
+Points go on the board of the city the visit happened in. Right after a Notch is added or removed,
+`sync_user` puts that customer's exact rank points on their boards. If Redis misses one (a crash,
+a restart, an empty Redis) ranks would be wrong, so `rebuild` replaces the boards from the ledger:
+at startup, every hour and from the CLI.
+
+Rank decay (decay.py): after 15 days without a Notch, rank points drop 10% a week until the next
+Notch; the points earned never change. The hourly rebuild applies it.
 
 Everyone with points is ranked. Equal points share a rank. Private customers keep their place, but
 the public list never shows who they are. Phone numbers are never on a board.
@@ -20,11 +24,12 @@ from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 
 from redis.asyncio import Redis
-from sqlalchemy import func, or_, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.time import IST, ist_date
 from app.core.logging import get_logger
+from app.modules.leaderboards.decay import DECAY_AFTER_DAYS, kept_percent, rank_points
 from app.modules.scans.models import PointsEntry, Visit, VisitStatus
 from app.modules.users.models import User, UserStatus
 from app.modules.venues.models import Venue
@@ -141,32 +146,20 @@ class LeaderboardService:
 
     async def rebuild(self, session: AsyncSession, *, now: datetime | None = None) -> int:
         """Replace every board from the ledger, all at once. Returns how many boards were written.
-        Revoked visits, and blocked or deleted customers, do not count."""
+        Revoked visits, and blocked or deleted customers, do not count. Rank decay applies."""
         now = now or datetime.now(UTC)
-        city = func.coalesce(Venue.city_id, User.city_id)
-        counted_at = func.coalesce(Visit.visited_at, PointsEntry.created_at)
-        query = (
-            select(city, PointsEntry.user_id, func.sum(PointsEntry.points))
-            .join(User, User.id == PointsEntry.user_id)
-            .outerjoin(Visit, Visit.id == PointsEntry.visit_id)
-            .outerjoin(Venue, Venue.id == Visit.venue_id)
-            .where(
-                or_(Visit.id.is_(None), Visit.status == VisitStatus.VALID),
-                User.status == UserStatus.ACTIVE,
-                User.deleted_at.is_(None),
-                city.is_not(None),
-            )
-            .group_by(city, PointsEntry.user_id)
-        )
+        query, month_query = _totals(now)
+        kept = await _kept_percents(session, ist_date(now))
         boards: dict[str, dict[str, int]] = defaultdict(dict)
         for city_id, user_id, points in await session.execute(query):
-            boards[board_key(city_id, ALL_TIME)][str(user_id)] = int(points)
-        this_month = month_start(now)
-        next_month = (this_month + timedelta(days=32)).replace(day=1)
-        monthly = query.where(counted_at >= this_month, counted_at < next_month)
+            boards[board_key(city_id, ALL_TIME)][str(user_id)] = rank_points(
+                int(points), kept.get(user_id, 100)
+            )
         month = month_of(now)
-        for city_id, user_id, points in await session.execute(monthly):
-            boards[board_key(city_id, month)][str(user_id)] = int(points)
+        for city_id, user_id, points in await session.execute(month_query):
+            boards[board_key(city_id, month)][str(user_id)] = rank_points(
+                int(points), kept.get(user_id, 100)
+            )
 
         stale = [key async for key in self.redis.scan_iter(match=KEY_PATTERN)]
         async with self.redis.pipeline(transaction=True) as pipe:
@@ -178,6 +171,105 @@ class LeaderboardService:
                     pipe.expire(key, MONTH_TTL_SECONDS)
             await pipe.execute()
         return len(boards)
+
+    async def sync_user(
+        self, session: AsyncSession, user_id: uuid.UUID, *, now: datetime | None = None
+    ) -> None:
+        """Put one customer's exact rank points on their boards, right after a Notch is added or
+        removed (a new Notch also ends any decay). Replaces their scores rather than adding, so
+        it is always the same as a rebuild."""
+        now = now or datetime.now(UTC)
+        query, month_query = _totals(now)
+        kept = (await _kept_percents(session, ist_date(now), user_id)).get(user_id, 100)
+        all_time = {
+            city_id: int(points)
+            for city_id, _, points in await session.execute(
+                query.where(PointsEntry.user_id == user_id)
+            )
+        }
+        this_month = {
+            city_id: int(points)
+            for city_id, _, points in await session.execute(
+                month_query.where(PointsEntry.user_id == user_id)
+            )
+        }
+        # Every city they ever had points in, so a board they no longer belong on is cleared.
+        city = func.coalesce(Venue.city_id, User.city_id)
+        cities = set(
+            (
+                await session.scalars(
+                    select(city)
+                    .distinct()
+                    .select_from(PointsEntry)
+                    .join(User, User.id == PointsEntry.user_id)
+                    .outerjoin(Visit, Visit.id == PointsEntry.visit_id)
+                    .outerjoin(Venue, Venue.id == Visit.venue_id)
+                    .where(PointsEntry.user_id == user_id, city.is_not(None))
+                )
+            ).all()
+        )
+        member, month = str(user_id), month_of(now)
+        async with self.redis.pipeline(transaction=True) as pipe:
+            for city_id in cities:
+                for key, totals in (
+                    (board_key(city_id, ALL_TIME), all_time),
+                    (board_key(city_id, month), this_month),
+                ):
+                    if city_id in totals:
+                        pipe.zadd(key, {member: rank_points(totals[city_id], kept)})
+                    else:
+                        pipe.zrem(key, member)
+                pipe.expire(board_key(city_id, month), MONTH_TTL_SECONDS)
+            await pipe.execute()
+
+
+def _totals(now: datetime) -> tuple[Select, Select]:
+    """(city, customer, points) from the ledger: all time, and this month (India time).
+    Revoked visits and blocked or deleted customers don't count."""
+    city = func.coalesce(Venue.city_id, User.city_id)
+    counted_at = func.coalesce(Visit.visited_at, PointsEntry.created_at)
+    query = (
+        select(city, PointsEntry.user_id, func.sum(PointsEntry.points))
+        .join(User, User.id == PointsEntry.user_id)
+        .outerjoin(Visit, Visit.id == PointsEntry.visit_id)
+        .outerjoin(Venue, Venue.id == Visit.venue_id)
+        .where(
+            or_(Visit.id.is_(None), Visit.status == VisitStatus.VALID),
+            User.status == UserStatus.ACTIVE,
+            User.deleted_at.is_(None),
+            city.is_not(None),
+        )
+        .group_by(city, PointsEntry.user_id)
+    )
+    this_month = month_start(now)
+    next_month = (this_month + timedelta(days=32)).replace(day=1)
+    return query, query.where(counted_at >= this_month, counted_at < next_month)
+
+
+async def last_notch_on(session: AsyncSession, user_id: uuid.UUID) -> date | None:
+    """The day (India time) of the customer's latest counted Notch."""
+    return await session.scalar(
+        select(func.max(Visit.visit_date)).where(
+            Visit.user_id == user_id, Visit.status == VisitStatus.VALID
+        )
+    )
+
+
+async def _kept_percents(
+    session: AsyncSession, today: date, user_id: uuid.UUID | None = None
+) -> dict[uuid.UUID, int]:
+    """Customers whose rank points are decaying, and how much they keep (decay.py): those
+    whose latest counted Notch is more than 15 days old."""
+    last = func.max(Visit.visit_date)
+    query = (
+        select(Visit.user_id, last)
+        .where(Visit.status == VisitStatus.VALID)
+        .group_by(Visit.user_id)
+        .having(last < today - timedelta(days=DECAY_AFTER_DAYS))
+    )
+    if user_id is not None:
+        query = query.where(Visit.user_id == user_id)
+    return {member: kept_percent(last, today) for member, last in await session.execute(query)}
 
 
 async def run_rebuilder(

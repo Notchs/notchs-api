@@ -162,9 +162,8 @@ class AdminPanelService:
             # Ranks are rebuilt from the database every hour; take the points off now too.
             if visit.user_id is not None:
                 try:
-                    await LeaderboardService(self.redis).add_points(
-                        venue.city_id, visit.user_id, -points, visit.visit_date
-                    )
+                    await self.session.flush()  # the board is read back from the database
+                    await LeaderboardService(self.redis).sync_user(self.session, visit.user_id)
                 except RedisError:
                     logger.exception("Notch %s removed; ranks fix at the next rebuild", notch_no)
         user = await self.session.get(User, visit.user_id) if visit.user_id else None

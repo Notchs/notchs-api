@@ -383,9 +383,7 @@ class WhatsAppBot:
         assert result.visit is not None
         service = LeaderboardService(self.redis)
         try:
-            await service.add_points(
-                venue.city_id, user.id, result.points_earned, result.visit.visit_date
-            )
+            await service.sync_user(session, user.id)
             rank = await service.rank_of(venue.city_id, user.id, Period.MONTH)
         except RedisError:
             logger.exception("Visit %s not on the leaderboard: Redis failed", result.visit.id)
