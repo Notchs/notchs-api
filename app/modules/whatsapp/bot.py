@@ -1,5 +1,7 @@
 """What the bot does with one incoming WhatsApp message.
 
+    CHANGE 123456   from a new number: move the customer's account to it (users/phone_change.py);
+                    handled before sign-up, so the new number never gets an account of its own
     every message   find the customer by phone, or create them (their first message is sign-up)
     LOGIN           reply with a single-use passport login link (3 per 15 minutes); typed, the
                     website's pre-typed "Hey Notchs, I want to login", or a tap on the help
@@ -56,6 +58,7 @@ from app.modules.tags.service import TagService, TriedOutcome
 from app.modules.users.consent import CONSENT_VERSION, consent_text
 from app.modules.users.handles import clean_name, free_handle
 from app.modules.users.models import User, UserStatus
+from app.modules.users.phone_change import PhoneChangeOutcome, PhoneChangeService, parse_command
 from app.modules.users.repository import UserRepository
 from app.modules.venues.models import Venue
 from app.modules.whatsapp.models import MessageType, WhatsAppMessage
@@ -94,6 +97,20 @@ CONSENT_BUTTON = ReplyButton(id="consent_agree", title="I agree, I'm 18+")
 CONSENT_THANKS = "Thanks!"
 # The same refused-scan or no-code reply at most once a minute per customer.
 SCAN_NOTICE_EVERY_SECONDS = 60
+PHONE_CHANGE_REPLIES = {
+    PhoneChangeOutcome.CHANGED: (
+        "Done. This is now your Notchs number. Your Notchs and rank moved with you."
+    ),
+    PhoneChangeOutcome.SAME: "This is already your Notchs number.",
+    PhoneChangeOutcome.INVALID: (
+        "That code didn't work. Codes work once and expire after 10 minutes. "
+        "Get a new one in your Notchs passport."
+    ),
+    PhoneChangeOutcome.TAKEN: (
+        "This number already has its own Notchs account, so another one can't move onto it."
+    ),
+    PhoneChangeOutcome.LIMITED: "Too many tries. Please wait 15 minutes and try again.",
+}
 # A menu row's id: try:<visit id>:<tag id>, so tapping an old menu updates the right visit.
 TRY_ROW_PREFIX = "try"
 
@@ -183,6 +200,10 @@ class WhatsAppBot:
         self.client = client
 
     async def __call__(self, session: AsyncSession, message: WhatsAppMessage) -> None:
+        code = parse_command(message.body) if message.message_type == MessageType.TEXT else None
+        if code is not None:
+            await self._phone_change(session, message, code)
+            return
         user = await find_or_create_customer(
             session, message.phone_e164, (message.payload or {}).get("profile_name")
         )
@@ -213,6 +234,32 @@ class WhatsAppBot:
             await self._no_code(session, sender, user)
         elif await self._notice_allowed(HELP_NOTICE, user):
             await sender.send_buttons(user.phone_e164, HELP_REPLY, [LOGIN_BUTTON], user_id=user.id)
+
+    async def _phone_change(
+        self, session: AsyncSession, message: WhatsAppMessage, code: str
+    ) -> None:
+        outcome, user = await PhoneChangeService(session, self.redis).finish(
+            message.phone_e164, code
+        )
+        if outcome in (PhoneChangeOutcome.CHANGED, PhoneChangeOutcome.SAME):
+            assert user is not None
+            message.user_id = user.id
+        else:
+            message.user_id = await session.scalar(
+                select(User.id).where(User.phone_e164 == message.phone_e164)
+            )
+            # A wrong code from a number with a blocked or deleted account: no reply.
+            if message.user_id is not None:
+                owner = await session.get(User, message.user_id)
+                if owner is None or owner.status != UserStatus.ACTIVE:
+                    return
+            notice = f"wa:notice:phone_change:{message.phone_e164}"
+            if not await self.redis.set(notice, "1", ex=SCAN_NOTICE_EVERY_SECONDS, nx=True):
+                return
+        text = PHONE_CHANGE_REPLIES[outcome]
+        await WhatsAppSender(session, self.client).send_text(
+            message.phone_e164, text, user_id=message.user_id
+        )
 
     async def _login(self, session: AsyncSession, sender: WhatsAppSender, user: User) -> None:
         if user.consent_at is None:
