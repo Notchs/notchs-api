@@ -37,6 +37,8 @@ class DayCount(BaseSchema):
 
 class Activity(BaseSchema):
     days: list[DayCount]
+    # The range before, day by day, for the comparison line.
+    previous_days: list[DayCount]
     visits: int
     visits_previous: int
     new_guests: int
@@ -101,6 +103,8 @@ class Guest(BaseSchema):
     last_visit_at: datetime
     # Average days between visits; None after one visit.
     average_gap_days: float | None
+    # Days from the first counted visit to the second; None until they come back.
+    days_to_second_visit: float | None
     # Oldest first, matching `month_labels`.
     visits_by_month: list[int]
     # The hour (IST, 0-23) they come most often.

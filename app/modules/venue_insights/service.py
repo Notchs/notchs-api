@@ -61,6 +61,19 @@ def _returning_rate(visits: Sequence[Row[Any]]) -> int | None:
     return round(100 * len(returning) / len(guests))
 
 
+def _per_day(visits: Sequence[Row[Any]], start: date, days: int) -> list[DayCount]:
+    """Visits and first-time guests for each IST day from `start`. A visit outside those days
+    (after `now`, from clock skew) is left out."""
+    counts: dict[date, list[int]] = {start + timedelta(days=n): [0, 0] for n in range(days)}
+    for row in visits:
+        day = counts.get(ist_date(row.visited_at))
+        if day is None:
+            continue
+        day[0] += 1
+        day[1] += row.visit_no_at_venue == 1
+    return [DayCount(day=d, visits=v, new_guests=n) for d, (v, n) in counts.items()]
+
+
 def _months_back(today: date, count: int) -> list[str]:
     year, month = today.year, today.month
     labels = []
@@ -93,17 +106,9 @@ class InsightsService:
         current = [r for r in rows if ist_date(r.visited_at) >= start]
         previous = [r for r in rows if ist_date(r.visited_at) < start]
 
-        per_day: dict[date, list[int]] = {
-            start + timedelta(days=n): [0, 0] for n in range(range_.days)
-        }
-        for row in current:
-            counts = per_day.get(ist_date(row.visited_at))
-            if counts is None:  # after `now` (clock skew): not in the range's days
-                continue
-            counts[0] += 1
-            counts[1] += row.visit_no_at_venue == 1
         activity = Activity(
-            days=[DayCount(day=d, visits=v, new_guests=n) for d, (v, n) in per_day.items()],
+            days=_per_day(current, start, range_.days),
+            previous_days=_per_day(previous, previous_start, range_.days),
             visits=len(current),
             visits_previous=len(previous),
             new_guests=sum(r.visit_no_at_venue == 1 for r in current),
@@ -176,6 +181,11 @@ class InsightsService:
                         last_visit_at=times[-1],
                         average_gap_days=(
                             round(span_days / (len(times) - 1), 1) if len(times) > 1 else None
+                        ),
+                        days_to_second_visit=(
+                            round((times[1] - times[0]).total_seconds() / 86400, 1)
+                            if len(times) > 1
+                            else None
                         ),
                         visits_by_month=[per_month[m] for m in months],
                         usual_hour=Counter(t.hour for t in local).most_common(1)[0][0],
