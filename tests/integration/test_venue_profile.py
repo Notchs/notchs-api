@@ -122,3 +122,47 @@ async def test_billing(api: AsyncClient, db, owner) -> None:  # noqa: F811
     assert founding["founding_no"] == 7
     assert founding["founding_discount_percent"] == 25
     assert founding["founding_spots_left"] <= 93
+
+
+async def test_the_venue_page_details(api: AsyncClient, owner) -> None:  # noqa: F811
+    cookies = owner["cookies"]
+
+    response = await api.patch(
+        "/venue/profile",
+        json={
+            "about": "A small café off Law Garden.",
+            "menu_url": "https://kahwa.example/menu",
+            "website_url": "",
+            "instagram_handle": "@KahwaHouse",
+            "contact_phone": "079 4000 1234",
+            "amenities": ["Parking", "Wi-Fi", "Wi-Fi"],
+            "visible_on_discover": False,
+        },
+        cookies=cookies,
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["instagram_handle"] == "kahwahouse"
+    assert data["website_url"] is None  # an empty link clears it
+    assert data["amenities"] == ["Wi-Fi", "Parking"]  # the usual order, once each
+    assert (data["contact_phone"], data["visible_on_discover"]) == ("079 4000 1234", False)
+    assert "Wheelchair access" in data["amenity_options"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"menu_url": "javascript:alert(1)"},
+        {"website_url": "kahwa.example"},
+        {"instagram_handle": "not a handle!"},
+        {"contact_phone": "call me"},
+        {"amenities": ["Helipad"]},
+        {"visible_on_discover": None},
+        {"about": "x" * 1001},
+    ],
+)
+async def test_bad_venue_page_details(api: AsyncClient, owner, body: dict) -> None:  # noqa: F811
+    response = await api.patch("/venue/profile", json=body, cookies=owner["cookies"])
+
+    assert response.status_code == 422

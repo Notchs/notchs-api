@@ -1,3 +1,4 @@
+import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -7,6 +8,8 @@ from pydantic import AfterValidator, BeforeValidator, Field, StringConstraints, 
 
 from app.common.schemas import BaseSchema, EntitySchema, PublicCode
 from app.modules.locations.models import SLUG_REGEX
+from app.modules.users.models import INSTAGRAM_REGEX
+from app.modules.venues.amenities import AMENITIES
 from app.modules.venues.founding import DEFAULT_FOUNDING_SPOTS, FOUNDING_SPOTS
 from app.modules.venues.models import (
     DEFAULT_FIRST_NOTCH_SPOTS,
@@ -186,8 +189,54 @@ class VenueProfileOut(BaseSchema):
     area: str | None
     address: str | None
     landmark: str | None
+    # The one-line tagline; `about` is the longer text.
     description: str | None
+    about: str | None
+    menu_url: str | None
+    website_url: str | None
+    instagram_handle: str | None
+    contact_phone: str | None
+    amenities: list[str]
+    visible_on_discover: bool
     opening_hours: dict[str, list[list[str]]] | None
+    # What the form offers: the areas of its city, and the amenities to pick from.
+    area_options: list[AreaOption]
+    amenity_options: list[str]
+
+
+class AreaOption(BaseSchema):
+    id: uuid.UUID
+    name: str
+
+
+def _web_link(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    value = value.strip()
+    if not re.fullmatch(r"https?://[^\s]{3,}", value, flags=re.IGNORECASE):
+        raise ValueError("Enter a full link starting with https://")
+    return value
+
+
+def _instagram(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    value = value.strip().removeprefix("@").lower()
+    if not re.fullmatch(INSTAGRAM_REGEX, value):
+        raise ValueError("Instagram usernames use letters, numbers, dots and underscores")
+    return value
+
+
+def _amenities(value: list[str] | None) -> list[str] | None:
+    if value is None:
+        return None
+    unknown = [item for item in value if item not in AMENITIES]
+    if unknown:
+        raise ValueError(f"Not an amenity Notchs offers: {', '.join(unknown)}")
+    return [item for item in AMENITIES if item in value]  # in the usual order, once each
+
+
+WebLink = Annotated[str | None, Field(max_length=300), AfterValidator(_web_link)]
 
 
 class VenueProfileUpdate(BaseSchema):
@@ -199,11 +248,19 @@ class VenueProfileUpdate(BaseSchema):
     landmark: str | None = Field(None, max_length=120)
     area_id: uuid.UUID | None = None
     opening_hours: OpeningHours | None = None
+    about: str | None = Field(None, max_length=1000)
+    menu_url: WebLink = None
+    website_url: WebLink = None
+    instagram_handle: Annotated[str | None, Field(max_length=31), AfterValidator(_instagram)] = None
+    contact_phone: str | None = Field(None, pattern=r"^[0-9+() -]{6,20}$")
+    amenities: Annotated[list[str] | None, AfterValidator(_amenities)] = None
+    visible_on_discover: bool | None = None
 
     @model_validator(mode="after")
-    def _name_not_null(self) -> Self:
-        if "name" in self.model_fields_set and self.name is None:
-            raise ValueError("A place needs a name")
+    def _not_null(self) -> Self:
+        for field in ("name", "visible_on_discover"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} can't be empty")
         return self
 
 

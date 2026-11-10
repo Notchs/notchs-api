@@ -28,6 +28,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Entity, in_values, public_code_column
 from app.modules.locations.models import SLUG_REGEX
+from app.modules.users.models import INSTAGRAM_REGEX
 from app.modules.venues.scan_codes import MAX_LENGTH as SCAN_CODE_MAX_LENGTH
 from app.modules.venues.scan_codes import SCAN_CODE_REGEX, random_scan_code
 
@@ -67,6 +68,7 @@ class Venue(Entity):
         CheckConstraint("(latitude IS NULL) = (longitude IS NULL)", name="coordinates_paired"),
         CheckConstraint("geofence_radius_m > 0", name="geofence_radius_positive"),
         CheckConstraint("founding_venue_no >= 1", name="founding_venue_no_positive"),
+        CheckConstraint(f"instagram_handle ~ '{INSTAGRAM_REGEX}'", name="instagram_handle_format"),
         # Numbered within each kind of place (venues/founding.py).
         UniqueConstraint(
             "category", "founding_venue_no", name="uq_venues_category_founding_venue_no"
@@ -107,6 +109,18 @@ class Venue(Entity):
     )
     # One line shown on the venue page.
     description: Mapped[str | None] = mapped_column(String(160))
+    # The longer "about" text on the venue page (`description` is its one-line tagline).
+    about: Mapped[str | None] = mapped_column(Text)
+    # Links and contact the owner shows on their venue page (venues/profile.py).
+    menu_url: Mapped[str | None] = mapped_column(String(300))
+    website_url: Mapped[str | None] = mapped_column(String(300))
+    instagram_handle: Mapped[str | None] = mapped_column(String(30))
+    # The place's own public number, as the owner writes it (never a customer's).
+    contact_phone: Mapped[str | None] = mapped_column(String(20))
+    # From AMENITIES in venues/profile.py, e.g. ["Wi-Fi", "Parking"].
+    amenities: Mapped[list[str] | None] = mapped_column(JSONB)
+    # Whether the place may appear on Discover once it opens.
+    visible_on_discover: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     # S3 object key, never a full URL.
     photo_s3_key: Mapped[str | None] = mapped_column(String(255))
     # {"mon": [["08:00", "23:00"]], ...} in IST. Validated by `schemas.OpeningHours`.

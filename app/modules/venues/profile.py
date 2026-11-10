@@ -1,7 +1,9 @@
 """What a venue's owner sees and edits about their own place (team decision, 10 Nov 2026: owners
 edit almost everything, but never the numbers). One login per place, so there is no team.
 
-    editable     name, one-line description, address, landmark, area (in its city), opening hours
+    editable     name, tagline (`description`), about, address, landmark, area (in its city),
+                 opening hours, menu and website links, Instagram, contact number, amenities,
+                 and whether it shows on Discover
     read-only    kind of place, scan code, status, founding number, billing; and every count,
                  which only ever comes from real Notchs
 
@@ -16,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.modules.locations.models import Area, City
 from app.modules.scans.niches import niche_of
+from app.modules.venues.amenities import AMENITIES
 from app.modules.venues.exceptions import VenueLocationInvalidException, VenueNotFoundException
 from app.modules.venues.founding import (
     FOUNDING_DISCOUNT_PERCENT,
@@ -25,6 +28,7 @@ from app.modules.venues.founding import (
 )
 from app.modules.venues.models import Venue, VenueMember
 from app.modules.venues.schemas import (
+    AreaOption,
     VenueBillingOut,
     VenueProfileOut,
     VenueProfileUpdate,
@@ -38,6 +42,7 @@ class _Place:
     venue: Venue
     city: str
     area: Area | None
+    areas: list[Area]
 
 
 class VenueProfileService:
@@ -87,7 +92,10 @@ class VenueProfileService:
         if row is None:
             raise VenueNotFoundException()
         venue, city, area = row
-        return _Place(venue, city, area)
+        areas = await self.session.scalars(
+            select(Area).where(Area.city_id == venue.city_id).order_by(Area.name)
+        )
+        return _Place(venue, city, area, list(areas))
 
     @staticmethod
     def _out(place: _Place) -> VenueProfileOut:
@@ -105,5 +113,14 @@ class VenueProfileService:
             address=venue.address,
             landmark=venue.landmark,
             description=venue.description,
+            about=venue.about,
+            menu_url=venue.menu_url,
+            website_url=venue.website_url,
+            instagram_handle=venue.instagram_handle,
+            contact_phone=venue.contact_phone,
+            amenities=venue.amenities or [],
+            visible_on_discover=venue.visible_on_discover,
             opening_hours=venue.opening_hours,
+            area_options=[AreaOption(id=a.id, name=a.name) for a in place.areas],
+            amenity_options=list(AMENITIES),
         )
