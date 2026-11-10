@@ -11,7 +11,8 @@ CATEGORY_LABELS = {
     VenueCategory.RESTAURANT: "Restaurant",
     VenueCategory.BAR: "Bar",
     VenueCategory.HOTEL: "Hotel",
-    VenueCategory.TURF_GYM: "Turf / Gym",
+    VenueCategory.TURF_GYM: "Turf / Box ground / Gym",
+    VenueCategory.THEATRE: "Theatre",
     VenueCategory.OTHER: "Other",
 }
 

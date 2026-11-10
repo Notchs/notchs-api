@@ -5,6 +5,7 @@ from sqlalchemy import ColumnElement, func, select
 
 from app.common.repository import BaseRepository
 from app.modules.locations.models import Area, City
+from app.modules.venues.founding import next_founding_no
 from app.modules.venues.models import Venue
 
 
@@ -69,9 +70,14 @@ class VenueRepository(BaseRepository[Venue]):
         return await self._exists(Venue.scan_code == scan_code, exclude_id=exclude_id)
 
     async def founding_venue_no_exists(
-        self, number: int, *, exclude_id: uuid.UUID | None = None
+        self, category: str, number: int, *, exclude_id: uuid.UUID | None = None
     ) -> bool:
-        return await self._exists(Venue.founding_venue_no == number, exclude_id=exclude_id)
+        return await self._exists(
+            Venue.category == category, Venue.founding_venue_no == number, exclude_id=exclude_id
+        )
+
+    async def next_founding_no(self, category: str) -> int | None:
+        return await next_founding_no(self.session, category)
 
     async def get_city(self, city_id: uuid.UUID) -> City | None:
         return await self.session.get(City, city_id)

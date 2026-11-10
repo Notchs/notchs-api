@@ -7,14 +7,17 @@ from pydantic import AfterValidator, BeforeValidator, Field, StringConstraints, 
 
 from app.common.schemas import BaseSchema, EntitySchema, PublicCode
 from app.modules.locations.models import SLUG_REGEX
+from app.modules.venues.founding import DEFAULT_FOUNDING_SPOTS, FOUNDING_SPOTS
 from app.modules.venues.models import (
     DEFAULT_FIRST_NOTCH_SPOTS,
     DEFAULT_GEOFENCE_RADIUS_M,
-    MAX_FOUNDING_VENUE_NO,
     VenueCategory,
     VenueStatus,
 )
 from app.modules.venues.scan_codes import SCAN_CODE_REGEX, normalize_scan_code
+
+# The highest founding number any kind of place can have (venues/founding.py).
+MAX_FOUNDING_NO = max([DEFAULT_FOUNDING_SPOTS, *FOUNDING_SPOTS.values()])
 
 Day = Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 ClockTime = Annotated[str, StringConstraints(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")]
@@ -72,7 +75,9 @@ class VenueCreate(BaseSchema):
     description: str | None = Field(None, max_length=160)
     photo_s3_key: str | None = Field(None, max_length=255)
     opening_hours: OpeningHours | None = None
-    founding_venue_no: int | None = Field(None, ge=1, le=MAX_FOUNDING_VENUE_NO)
+    founding_venue_no: int | None = Field(
+        None, ge=1, le=max(FOUNDING_SPOTS.values(), default=DEFAULT_FOUNDING_SPOTS)
+    )
     first_notch_spots: int = Field(DEFAULT_FIRST_NOTCH_SPOTS, ge=0)
     free_until: date | None = None
     monthly_fee_paise: int | None = Field(None, ge=0)
@@ -100,7 +105,9 @@ class VenueUpdate(BaseSchema):
     description: str | None = Field(None, max_length=160)
     photo_s3_key: str | None = Field(None, max_length=255)
     opening_hours: OpeningHours | None = None
-    founding_venue_no: int | None = Field(None, ge=1, le=MAX_FOUNDING_VENUE_NO)
+    founding_venue_no: int | None = Field(
+        None, ge=1, le=max(FOUNDING_SPOTS.values(), default=DEFAULT_FOUNDING_SPOTS)
+    )
     first_notch_spots: int | None = Field(None, ge=0)
     free_until: date | None = None
     monthly_fee_paise: int | None = Field(None, ge=0)
@@ -162,3 +169,51 @@ class VenuePublicOut(BaseSchema):
     photo_s3_key: str | None
     opening_hours: OpeningHours | None
     founding_venue_no: int | None
+
+
+class VenueProfileOut(BaseSchema):
+    """The owner's own place (venues/profile.py)."""
+
+    venue_code: str
+    name: str
+    category: VenueCategory
+    # "café", "theatre"...
+    niche: str
+    scan_code: str
+    status: VenueStatus
+    city: str
+    area_id: uuid.UUID | None
+    area: str | None
+    address: str | None
+    landmark: str | None
+    description: str | None
+    opening_hours: dict[str, list[list[str]]] | None
+
+
+class VenueProfileUpdate(BaseSchema):
+    """What the owner may change. Kind of place, scan code and anything billing are not here."""
+
+    name: str | None = Field(None, min_length=2, max_length=120)
+    description: str | None = Field(None, max_length=160)
+    address: str | None = Field(None, max_length=300)
+    landmark: str | None = Field(None, max_length=120)
+    area_id: uuid.UUID | None = None
+    opening_hours: OpeningHours | None = None
+
+    @model_validator(mode="after")
+    def _name_not_null(self) -> Self:
+        if "name" in self.model_fields_set and self.name is None:
+            raise ValueError("A place needs a name")
+        return self
+
+
+class VenueBillingOut(BaseSchema):
+    # Nothing is charged during the free months; the subscription amount isn't decided yet.
+    amount_due_paise: int
+    free_months: int
+    # This place's founding number within its kind, or None if the spots were gone.
+    founding_no: int | None
+    founding_spots: int
+    founding_spots_left: int
+    founding_discount_percent: int
+    niche: str

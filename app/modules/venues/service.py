@@ -12,6 +12,7 @@ from app.modules.venues.exceptions import (
     VenueScanCodeTakenException,
     VenueSlugTakenException,
 )
+from app.modules.venues.founding import founding_spots
 from app.modules.venues.models import Venue, VenueStatus
 from app.modules.venues.repository import VenueRepository
 from app.modules.venues.scan_codes import scan_code_base, with_number
@@ -67,10 +68,12 @@ class VenueService(BaseService[Venue]):
 
     async def create(self, payload: VenueCreate) -> Venue:  # type: ignore[override]
         await self._check_location(payload.city_id, payload.area_id)
-        if payload.founding_venue_no is not None:
-            await self._check_founding_venue_no(payload.founding_venue_no)
-
         data = payload.model_dump()
+        if payload.founding_venue_no is not None:
+            await self._check_founding_venue_no(payload.category, payload.founding_venue_no)
+        else:
+            # The next founding place of its kind, while spots are left (venues/founding.py).
+            data["founding_venue_no"] = await self.repository.next_founding_no(payload.category)
         if payload.slug is None:
             data["slug"] = await self._free_slug(payload.city_id, slugify(payload.name))
         elif await self.repository.slug_exists(payload.city_id, payload.slug):
@@ -99,7 +102,11 @@ class VenueService(BaseService[Venue]):
         if data.get("area_id") is not None:
             await self._check_location(venue.city_id, data["area_id"])
         if data.get("founding_venue_no") is not None:
-            await self._check_founding_venue_no(data["founding_venue_no"], exclude_id=venue.id)
+            await self._check_founding_venue_no(
+                data.get("category") or venue.category,
+                data["founding_venue_no"],
+                exclude_id=venue.id,
+            )
         return await self.repository.update(venue, data)
 
     async def set_status(
@@ -127,9 +134,11 @@ class VenueService(BaseService[Venue]):
             raise VenueLocationInvalidException()
 
     async def _check_founding_venue_no(
-        self, number: int, *, exclude_id: uuid.UUID | None = None
+        self, category: str, number: int, *, exclude_id: uuid.UUID | None = None
     ) -> None:
-        if await self.repository.founding_venue_no_exists(number, exclude_id=exclude_id):
+        if number > founding_spots(category) or await self.repository.founding_venue_no_exists(
+            category, number, exclude_id=exclude_id
+        ):
             raise FoundingVenueNoTakenException()
 
     async def _free_scan_code(self, base: str) -> str:

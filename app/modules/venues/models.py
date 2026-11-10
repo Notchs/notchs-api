@@ -33,7 +33,6 @@ from app.modules.venues.scan_codes import SCAN_CODE_REGEX, random_scan_code
 
 DEFAULT_GEOFENCE_RADIUS_M = 150
 DEFAULT_FIRST_NOTCH_SPOTS = 50
-MAX_FOUNDING_VENUE_NO = 30
 
 
 class VenueCategory(StrEnum):
@@ -41,7 +40,8 @@ class VenueCategory(StrEnum):
     RESTAURANT = "restaurant"
     BAR = "bar"
     HOTEL = "hotel"
-    TURF_GYM = "turf_gym"
+    TURF_GYM = "turf_gym"  # turfs, box grounds and gyms
+    THEATRE = "theatre"
     OTHER = "other"
 
 
@@ -66,9 +66,10 @@ class Venue(Entity):
         CheckConstraint("longitude BETWEEN -180 AND 180", name="longitude_range"),
         CheckConstraint("(latitude IS NULL) = (longitude IS NULL)", name="coordinates_paired"),
         CheckConstraint("geofence_radius_m > 0", name="geofence_radius_positive"),
-        CheckConstraint(
-            f"founding_venue_no BETWEEN 1 AND {MAX_FOUNDING_VENUE_NO}",
-            name="founding_venue_no_range",
+        CheckConstraint("founding_venue_no >= 1", name="founding_venue_no_positive"),
+        # Numbered within each kind of place (venues/founding.py).
+        UniqueConstraint(
+            "category", "founding_venue_no", name="uq_venues_category_founding_venue_no"
         ),
         CheckConstraint("first_notch_spots >= 0", name="first_notch_spots_non_negative"),
         CheckConstraint("monthly_fee_paise >= 0", name="monthly_fee_paise_non_negative"),
@@ -116,8 +117,9 @@ class Venue(Entity):
         server_default=VenueStatus.PENDING.value,
         index=True,
     )
-    # 1-30 only, a real "founding venue" number.
-    founding_venue_no: Mapped[int | None] = mapped_column(Integer, unique=True)
+    # Its place among the first places of its kind to join (venues/founding.py): #1 to #100
+    # (#200 for turfs), 25% off for life. None after the founding spots are gone.
+    founding_venue_no: Mapped[int | None] = mapped_column(Integer)
     # How many customers can get the First Notch badge at this venue.
     first_notch_spots: Mapped[int] = mapped_column(
         Integer,

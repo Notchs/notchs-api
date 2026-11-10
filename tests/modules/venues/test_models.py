@@ -81,7 +81,7 @@ def test_venue_indexes_and_unique_constraints() -> None:
         "uq_venues_city_id_slug": ["city_id", "slug"],
         "uq_venues_venue_code": ["venue_code"],
         "uq_venues_scan_code": ["scan_code"],
-        "uq_venues_founding_venue_no": ["founding_venue_no"],
+        "uq_venues_category_founding_venue_no": ["category", "founding_venue_no"],
     }
 
 
@@ -96,7 +96,7 @@ def test_venue_checks_list_every_enum_value() -> None:
         assert f"'{category.value}'" in checks["ck_venues_category_valid"]
     for status in VenueStatus:
         assert f"'{status.value}'" in checks["ck_venues_status_valid"]
-    assert "BETWEEN 1 AND 30" in checks["ck_venues_founding_venue_no_range"]
+    assert checks["ck_venues_founding_venue_no_positive"] == "founding_venue_no >= 1"
 
 
 def test_enum_values_fit_their_columns() -> None:

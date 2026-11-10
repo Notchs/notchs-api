@@ -39,7 +39,7 @@ def test_create_strips_the_name() -> None:
         {"geofence_radius_m": 0},
         {"first_notch_spots": -1},
         {"founding_venue_no": 0},
-        {"founding_venue_no": 31},
+        {"founding_venue_no": 201},  # more than any kind's founding spots
         {"monthly_fee_paise": -1},
         {"latitude": "23.0225"},
         {"longitude": "72.5714"},

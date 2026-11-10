@@ -354,6 +354,23 @@ The text goes through the same steps as a real WhatsApp message, and the respons
 bot's replies (`data.replies`, buttons shown as `[title]` lines), login links included.
 Nothing is sent to Meta.
 
+## The owner's own place
+
+One login per place (team decision): the owner's. With it they see and edit their place, but
+never the numbers, which only come from real Notchs (`app/modules/venues/profile.py`).
+
+| Endpoint | Notes |
+|---|---|
+| `GET /venue/profile` | Name, kind of place, scan code, status, city, area, address, landmark, description, opening hours |
+| `PATCH /venue/profile` | Any of `name`, `description` (160), `address` (300), `landmark` (120), `area_id` (in its city), `opening_hours`. Kind of place, scan code, status and billing can't be changed here; renaming keeps the link and the scan code |
+| `GET /venue/billing` | `amount_due_paise` (0), `free_months` (3), and the founding discount: `founding_no`, `founding_spots`, `founding_spots_left`, `founding_discount_percent` |
+
+**Founding places and free months** (team decisions, `app/modules/venues/founding.py`): every place
+pays nothing for its first 3 months, then the subscription charges apply (amount not decided).
+The first 100 places of each kind (the first 200 turfs, box grounds and gyms) get 25% off for life.
+A place gets its founding number, within its kind, when the team approves it. Kinds of place:
+café, restaurant, bar, hotel, turf / box ground / gym, theatre, other.
+
 ## Deleting an account
 
 A customer deletes their account from the passport (`POST /me/delete` with `{"confirm": "DELETE"}`),
