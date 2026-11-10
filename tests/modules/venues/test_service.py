@@ -14,6 +14,7 @@ from app.modules.venues.exceptions import (
     VenueScanCodeTakenException,
     VenueSlugTakenException,
 )
+from app.modules.venues.founding import founding_spots
 from app.modules.venues.models import Venue, VenueStatus
 from app.modules.venues.schemas import VenueCreate, VenueUpdate
 from app.modules.venues.service import VenueService
@@ -71,11 +72,17 @@ class FakeVenueRepository:
         return any(v.scan_code == scan_code and v.id != exclude_id for v in self.venues.values())
 
     async def founding_venue_no_exists(
-        self, number: int, *, exclude_id: uuid.UUID | None = None
+        self, category: str, number: int, *, exclude_id: uuid.UUID | None = None
     ) -> bool:
         return any(
-            v.founding_venue_no == number and v.id != exclude_id for v in self.venues.values()
+            (v.category, v.founding_venue_no) == (category, number) and v.id != exclude_id
+            for v in self.venues.values()
         )
+
+    async def next_founding_no(self, category: str) -> int | None:
+        taken = [v.founding_venue_no or 0 for v in self.venues.values() if v.category == category]
+        number = max(taken, default=0) + 1
+        return number if number <= founding_spots(category) else None
 
     async def get_city(self, city_id: uuid.UUID) -> City | None:
         return self.cities.get(city_id)
@@ -177,11 +184,35 @@ async def test_create_accepts_area_in_the_same_city(
     assert (await service.create(_payload(city, area_id=area.id))).area_id == area.id
 
 
-async def test_founding_venue_no_is_unique(service: VenueService, city: City) -> None:
+async def test_founding_venue_no_is_unique_within_its_kind(
+    service: VenueService, city: City
+) -> None:
     await service.create(_payload(city, founding_venue_no=1))
 
     with pytest.raises(FoundingVenueNoTakenException):
         await service.create(_payload(city, name="Second", founding_venue_no=1))
+    other_kind = await service.create(
+        _payload(city, name="Turf", category="turf_gym", founding_venue_no=1)
+    )
+    assert other_kind.founding_venue_no == 1
+    with pytest.raises(FoundingVenueNoTakenException):  # past the 100 café spots
+        await service.create(_payload(city, name="Late", founding_venue_no=101))
+
+
+async def test_new_places_get_the_next_founding_number(
+    service: VenueService, repo: FakeVenueRepository, city: City
+) -> None:
+    first = await service.create(_payload(city))
+    second = await service.create(_payload(city, name="Second"))
+    turf = await service.create(_payload(city, name="Turf", category="turf_gym"))
+    numbers = (first.founding_venue_no, second.founding_venue_no, turf.founding_venue_no)
+    for venue in repo.venues.values():
+        if venue.category == "cafe":
+            venue.founding_venue_no = 100  # every café spot gone
+    late = await service.create(_payload(city, name="Late"))
+
+    assert numbers == (1, 2, 1)  # numbered within each kind
+    assert late.founding_venue_no is None
 
 
 async def test_rename_keeps_the_slug(service: VenueService, city: City) -> None:

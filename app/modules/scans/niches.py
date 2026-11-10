@@ -27,6 +27,7 @@ NICHES: dict[str, Niche] = {
     # Not decided yet.
     VenueCategory.BAR: Niche("bar", "grey", DEFAULT_VISIT_POINTS),
     VenueCategory.HOTEL: Niche("hotel", "grey", DEFAULT_VISIT_POINTS),
+    VenueCategory.THEATRE: Niche("theatre", "grey", DEFAULT_VISIT_POINTS),
     VenueCategory.OTHER: Niche("place", "grey", DEFAULT_VISIT_POINTS),
 }
 

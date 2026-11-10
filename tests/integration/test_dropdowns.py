@@ -38,7 +38,8 @@ async def test_venue_categories(api: AsyncClient) -> None:
         {"value": "restaurant", "label": "Restaurant"},
         {"value": "bar", "label": "Bar"},
         {"value": "hotel", "label": "Hotel"},
-        {"value": "turf_gym", "label": "Turf / Gym"},
+        {"value": "turf_gym", "label": "Turf / Box ground / Gym"},
+        {"value": "theatre", "label": "Theatre"},
         {"value": "other", "label": "Other"},
     ]
 
@@ -88,7 +89,7 @@ async def test_several_in_one_call(api: AsyncClient, cities) -> None:
     assert response.status_code == 200
     data = response.json()["data"]
     assert list(data) == ["cities", "venue_categories", "areas"]
-    assert len(data["venue_categories"]) == 6
+    assert len(data["venue_categories"]) == 7
 
 
 @pytest.mark.parametrize(
