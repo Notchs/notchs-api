@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.modules.admin_panel.router import router as admin_panel_router
+from app.modules.admin_users.router import router as admin_users_router
 from app.modules.auth.admin_router import router as admin_auth_router
 from app.modules.auth.router import router as auth_router
 from app.modules.auth.venue_router import router as venue_auth_router
@@ -30,6 +31,7 @@ api_router.include_router(venue_auth_router)
 api_router.include_router(venue_applications_router)
 api_router.include_router(dropdowns_router)
 api_router.include_router(admin_auth_router)
+api_router.include_router(admin_users_router)
 api_router.include_router(admin_applications_router)
 api_router.include_router(admin_panel_router)
 api_router.include_router(leaderboards_router)
