@@ -334,9 +334,7 @@ class ClaimService:
         logger.info("Claim %s approved by admin %s", claim.claim_code, admin.admin_user_code)
 
         try:
-            await LeaderboardService(self.redis).add_points(
-                venue.city_id, user.id, points, visit.visit_date
-            )
+            await LeaderboardService(self.redis).sync_user(self.session, user.id)
         except RedisError:  # the next rebuild puts the points on the board
             logger.exception("Claim %s: points not on the leaderboard yet", claim.claim_code)
         notified = await self._tell(

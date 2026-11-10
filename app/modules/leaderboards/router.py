@@ -1,6 +1,7 @@
 """`/leaderboards`: the public list per city, and a logged-in customer's own standing."""
 
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request, Response
@@ -9,8 +10,10 @@ from sqlalchemy import select
 from app.common.dependencies import DBSession, RedisClient
 from app.common.http import client_ip
 from app.common.schemas import CustomResponse
+from app.common.time import ist_date
 from app.core import rate_limit
 from app.modules.auth.dependencies import CurrentUser
+from app.modules.leaderboards.decay import kept_percent, next_drop_on
 from app.modules.leaderboards.exceptions import (
     LeaderboardCityNotFoundException,
     LeaderboardRateLimitedException,
@@ -22,7 +25,7 @@ from app.modules.leaderboards.schemas import (
     MyStandingOut,
     VisibilityIn,
 )
-from app.modules.leaderboards.service import LeaderboardService, Period
+from app.modules.leaderboards.service import LeaderboardService, Period, last_notch_on
 from app.modules.locations.models import City
 
 router = APIRouter(prefix="/leaderboards", tags=["Leaderboards"])
@@ -66,23 +69,29 @@ async def leaderboard(
     )
 
 
-async def _standing(user, redis) -> MyStandingOut:
+async def _standing(user, session, redis) -> MyStandingOut:
     month = all_time = None
     if user.city_id is not None:
         service = LeaderboardService(redis)
         month = await service.rank_of(user.city_id, user.id, Period.MONTH)
         all_time = await service.rank_of(user.city_id, user.id, Period.ALL)
+    today = ist_date(datetime.now(UTC))
+    last = await last_notch_on(session, user.id)
     return MyStandingOut(
         city_id=user.city_id,
         is_public=user.is_public,
         month=MyRank.model_validate(month) if month else None,
         all_time=MyRank.model_validate(all_time) if all_time else None,
+        rank_points_percent=kept_percent(last, today),
+        rank_drops_on=next_drop_on(last, today),
     )
 
 
 @router.get("/me", response_model=CustomResponse[MyStandingOut], summary="My rank in my home city")
-async def my_standing(user: CurrentUser, redis: RedisClient) -> CustomResponse[MyStandingOut]:
-    return CustomResponse(message="OK", data=await _standing(user, redis))
+async def my_standing(
+    user: CurrentUser, session: DBSession, redis: RedisClient
+) -> CustomResponse[MyStandingOut]:
+    return CustomResponse(message="OK", data=await _standing(user, session, redis))
 
 
 @router.patch(
@@ -95,4 +104,4 @@ async def set_visibility(
 ) -> CustomResponse[MyStandingOut]:
     user.is_public = body.is_public
     await session.flush()
-    return CustomResponse(message="Saved.", data=await _standing(user, redis))
+    return CustomResponse(message="Saved.", data=await _standing(user, session, redis))

@@ -128,7 +128,7 @@ async def test_redis_failing_keeps_the_visit_and_the_stamp(
     async def fails(*_, **__) -> None:
         raise RedisError("down")
 
-    monkeypatch.setattr(LeaderboardService, "add_points", fails)
+    monkeypatch.setattr(LeaderboardService, "sync_user", fails)
     venue, secret = await add_venue(db)
     user = await add_customer(db)
 
@@ -402,6 +402,8 @@ async def test_my_standing_before_any_visit(api: AsyncClient, db, redis) -> None
         "is_public": False,
         "month": None,
         "all_time": None,
+        "rank_points_percent": 100,
+        "rank_drops_on": None,
     }
 
 
