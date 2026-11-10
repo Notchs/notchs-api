@@ -41,6 +41,8 @@ notchs-api/
 │       ├── dropdowns/          # GET /dropdowns/{name}: option lists for every form
 │       ├── health/
 │       ├── locations/          # Cities and areas (models only)
+│       ├── leaderboards/       # City ranks in Redis, rebuilt from the points ledger
+│       ├── tags/               # Tags (admins only), venue tags and items, "What did you try?"
 │       ├── users/              # Customers (model only)
 │       ├── venue_applications/ # "Apply as a venue" form + admin review (approve/reject)
 │       ├── venues/             # Venues, venue members, counter phone pairing and display
@@ -169,8 +171,16 @@ Rules for the shared DB:
 | `venues` | `venue_code` | `VEN` |
 | `admin_users` | `admin_user_code` | `ADM` |
 | `venue_applications` | `application_code` | `APP` |
+| `visit_claims` | `claim_code` | `CLM` |
 
 Add a row here when a new table gets a code. A prefix is never reused or changed.
+
+**Venue scan codes** are different: `venues.scan_code` (e.g. `KAHWA`) is what customers send to
+get notched. It is made from the venue's name when the venue is created (`KAHWA`, then `KAHWA2`...),
+3–10 capital letters and digits starting with a letter, unique, and an admin may change it. The
+counter phone's QR opens WhatsApp with **"Hey Notchs!, get me notched. KAHWA-482913"**, where
+`482913` is the live code it shows. `GET /api/v1/display/config` returns `scan.link_template`: replace
+`{code}` with the live code and draw it as a QR.
 
 ## Redis
 
@@ -196,7 +206,8 @@ production refuse to start until the real values are set.
 | `ACCESS_TOKEN_TTL_MINUTES`, `REFRESH_TOKEN_TTL_DAYS` | Session lifetimes (15 minutes, 30 days). |
 | `TOTP_ENCRYPTION_KEY` | Fernet key that encrypts counter phones' code secrets. Required outside local/development. **Never change it without re-encrypting**: existing counters would stop working. |
 | `EMAIL_DRY_RUN` | `true`: log emails (with their codes and links) instead of sending. Must be `false` in production. |
-| `RESEND_API_KEY`, `EMAIL_FROM` | Resend account key and sender. Needed when `EMAIL_DRY_RUN=false`. |
+| `RESEND_API_KEY`, `EMAIL_FROM` | Resend account key and sender. Needed when `EMAIL_DRY_RUN=false`, unless `SMTP_HOST` is set. |
+| `SMTP_HOST`, `SMTP_PORT` | Local and development only: send to this server instead of Resend. Set `SMTP_HOST=mailpit` with `EMAIL_DRY_RUN=false` to read every email at http://localhost:8025. Mailpit delivers nothing. |
 | `VENUE_APP_URL`, `ADMIN_APP_URL`, `CUSTOMER_APP_URL` | Where links point, e.g. `https://venues.notchs.com`, `https://admin.notchs.com`, `https://notchs.com`. https outside local/development. |
 | `ADMIN_NOTIFY_EMAIL` | Optional. Gets a "New venue application" email (no applicant contact details in it). |
 | `TURNSTILE_SECRET` | Cloudflare Turnstile secret for the CAPTCHA on public forms. |
@@ -206,6 +217,8 @@ production refuse to start until the real values are set.
 | `WHATSAPP_API_VERSION` | Meta Graph API version, e.g. `v23.0`. |
 | `WHATSAPP_APP_SECRET` | Meta app secret (App settings → Basic). Checks the signature on every webhook call; without it, all are refused. Required in production. |
 | `WHATSAPP_VERIFY_TOKEN` | Any random string; also entered in Meta's webhook form. Required in production. |
+| `WHATSAPP_PUBLIC_NUMBER` | The number customers message, digits with the country code (e.g. `15556755530`, the test number). Counter phones put it in their scan QR. Required in production. |
+| `WHATSAPP_STAMP_IMAGE_URL` | Optional public https image sent with a stamp. Unset: the stamp is a text message. |
 | `WHATSAPP_SWEEP_INTERVAL_SECONDS` | How often the API retries incoming messages left unhandled (default `60`; `0` turns it off). |
 
 ### Sessions (for the frontends)
@@ -233,7 +246,8 @@ Venue app endpoints (all under `/api/v1`):
 | `POST /venue/me/email/send-code` | `{new_email, current_password}` | Logged in. Emails a 6-digit code to the new address. Always `202`. |
 | `POST /venue/me/email/verify` | `{code}` | Logged in. Switches the login email; the old address gets a notice. |
 
-Locally, emails are written to the API log (`EMAIL_DRY_RUN=true`), so copy links from there.
+Locally, emails are written to the API log (`EMAIL_DRY_RUN=true`), so copy links from there, or
+read them in Mailpit at http://localhost:8025 (`EMAIL_DRY_RUN=false`, `SMTP_HOST=mailpit`).
 
 "Apply as a venue" form (public, no login):
 
@@ -259,7 +273,10 @@ Pairing gives the counter a new secret, so a replaced phone's codes stop working
 moves the venue from `signed` to `counter_live`.
 
 Customer site (`nx_user_*` cookies): customers log in with the link the WhatsApp bot sends after
-they type LOGIN. The link opens `/login/verify?token=...`; that page must `POST /auth/customer/consume`
+they type LOGIN, or send what the website's "Continue with WhatsApp" button pre-types,
+`Hey Notchs, I want to login` (open `https://wa.me/<WhatsApp number>?text=Hey%20Notchs%2C%20I%20want%20to%20login`).
+New numbers get an account and the consent question first, the same as a first scan.
+The link opens `/login/verify?token=...`; that page must `POST /auth/customer/consume`
 with `{token}` (opening the link alone does nothing, so WhatsApp's link preview can't use it up).
 The link works once and expires after 15 minutes.
 
@@ -272,6 +289,12 @@ Admin panel (`nx_admin_*` cookies): `POST /admin/auth/login`, `/admin/auth/set-p
 | `GET /admin/venue-applications/{id or APP-code}` | admin, reviewer | One application, with the Maps link. |
 | `POST /admin/venue-applications/{ref}/approve` | admin | Body (all optional): `area_id`, `address`, `latitude` + `longitude`. Creates the venue (`signed`) and the owner's login, then emails the set-password link. |
 | `POST /admin/venue-applications/{ref}/reject` | admin | Body: `reason`, `notify` (default `true` emails the applicant). |
+
+Admin Settings (`/admin/users`, role `admin` only): `GET` lists every admin; `POST {name, email, role}`
+adds one and emails a set-password link; `PATCH /{ADM-code} {role?, is_active?}` changes the role
+or turns them off (which logs them out at once); `POST /{ADM-code}/link` emails a new link. Nobody
+can remove their own admin access and there is always an active admin. The CLI below is only
+needed for the very first admin.
 
 ## Command-line tasks
 
@@ -307,10 +330,18 @@ What the bot replies:
 | Customer sends | Bot |
 |---|---|
 | Their first message | Creates the customer (the phone number is their identity) |
-| `LOGIN`, or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes) |
+| `LOGIN`, `Hey Notchs, I want to login` (pre-typed by the website), or taps **🔑 Login link** | A single-use passport login link (15 minutes; at most 3 links per 15 minutes). If they have not agreed yet, the consent question instead |
+| A scan: `Hey Notchs!, get me notched. KAHWA-482913` | Counts the visit: stamp, notch number, points and a login link. Or says why not (wrong or expired code, already notched today, already a Notch in this niche today); the same refusal at most once a minute |
+| `CHANGE 123456` from a new number (code from `POST /me/phone-change`, 10 minutes, works once) | Moves the customer's account to that number. Refused if the number already has its own account; never creates one. Wrong codes: 5 per number per 15 minutes |
+| The scan sentence with no code | No stamp, a login link |
+| `CLAIM CLM-7K3M9QX2` (pre-typed by the passport's claim link) | "Now send the bill photo". Or says the photo already came, or that no open claim has that code (at most once a minute) |
+| A photo | Goes to their claim waiting for a photo today (or the one named in the caption): "we'll check it soon". With no such claim: how to start one (at most once a minute) |
+| Taps **I agree, I'm 18+** | Records the privacy consent and 18+ confirmation, replies with a login link |
+| Picks from the **What did you try?** menu (sent after a stamp, once they have agreed, if the venue has items) | Saves the answer for that visit, up to 24 hours later. Several answers are fine. No points |
 | Anything else | A short help message with a **🔑 Login link** button (at most once every 10 minutes) |
 
-Blocked and deleted customers get no reply. With `WHATSAPP_DRY_RUN=true` replies, login links
+Customers who have not agreed yet never get a link, only the consent question; a scan's visit
+still counts. Blocked and deleted customers get no reply. With `WHATSAPP_DRY_RUN=true` replies, login links
 included, are written to the log instead of sent.
 
 ### Trying the bot without WhatsApp
@@ -321,11 +352,104 @@ Logged in as an admin (role `admin`), outside production:
 POST /api/v1/dev/simulate-inbound
 {"phone": "98765 43210", "text": "LOGIN"}
 {"phone": "98765 43210", "button": "login"}   # a tap on the 🔑 Login link button
+{"phone": "98765 43210", "text": "Hey Notchs!, get me notched. KAHWA-482913"}   # a scan: needs the counter's real live code
+{"phone": "98765 43210", "button": "consent_agree"}   # a tap on I agree, I'm 18+ (a new number needs this before a link)
 ```
 
 The text goes through the same steps as a real WhatsApp message, and the response lists the
 bot's replies (`data.replies`, buttons shown as `[title]` lines), login links included.
 Nothing is sent to Meta.
+
+## The owner's own place
+
+One login per place (team decision): the owner's. With it they see and edit their place, but
+never the numbers, which only come from real Notchs (`app/modules/venues/profile.py`).
+
+| Endpoint | Notes |
+|---|---|
+| `GET /venue/profile` | Name, kind of place, scan code, status, city, area, address, landmark, description, opening hours |
+| `PATCH /venue/profile` | Any of `name`, `description` (the tagline, 160), `about` (1000), `address` (300), `landmark` (120), `area_id` (in its city), `opening_hours`, `menu_url` and `website_url` (https links), `instagram_handle`, `contact_phone` (the place's own number), `amenities` (from the fixed list in `venues/amenities.py`), `visible_on_discover`. Kind of place, scan code, status and billing can't be changed here; renaming keeps the link and the scan code |
+| `GET /venue/billing` | `amount_due_paise` (0), `free_months` (3), and the founding discount: `founding_no`, `founding_spots`, `founding_spots_left`, `founding_discount_percent` |
+
+**Founding places and free months** (team decisions, `app/modules/venues/founding.py`): every place
+pays nothing for its first 3 months, then the subscription charges apply (amount not decided).
+The first 100 places of each kind (the first 200 turfs, box grounds and gyms) get 25% off for life.
+A place gets its founding number, within its kind, when the team approves it. Kinds of place:
+café, restaurant, bar, hotel, turf / box ground / gym, theatre, other.
+
+## Deleting an account
+
+A customer deletes their account from the passport (`POST /me/delete` with `{"confirm": "DELETE"}`),
+or an admin does it when they ask support (`POST /admin/customers/{handle}/delete` with the handle
+typed again; `admin` role). It is permanent (team decision) and happens at once
+(`app/modules/users/deletion.py`):
+
+- **Deleted:** phone number, name, Instagram, area, consent, logins, bill-photo claims, invites and
+  their Star Points, and the number, text and raw data of every WhatsApp message to or from them.
+- **Kept, anonymous (team decision):** their visits and points, so venues' past totals don't change.
+  The account row stays as an empty shell (status `deleted`, random handle, no number). It is never
+  shown on leaderboards, admin lists or venue screens and can't log in.
+- A later message from the same number starts a brand-new account.
+
+## Bill-photo claims
+
+When a counter phone is down, a customer can still get the Notch: they start a claim in their
+passport, send `CLAIM CLM-...` and then a photo of the bill on WhatsApp, the same day (India time),
+and an admin checks it. Notchs stores only WhatsApp's id for the photo, never the photo; the admin
+screen fetches it from WhatsApp when opened. **WhatsApp keeps media about 30 days**, so claims must be
+checked within that time. An approved claim is a normal visit with points, marked `verified`.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /me/claims/venues?q=` | Logged-in customer | Live places by name (2–60 characters), up to 10 |
+| `POST /me/claims` | Logged-in customer | `{venue_code}`. A `CLM-` code and a WhatsApp link pre-typed with `CLAIM CLM-...`. Up to 3 a day; one per place a day; not where they already have a Notch today, or one of that kind |
+| `GET /me/claims` | Logged-in customer | Their last 20 claims: `awaiting_photo`, `expired` (no photo that day), `in_review`, `approved` (with the Notch number) or `rejected` (with the reason) |
+| `GET /admin/claims?status=in_review` | admin, reviewer | Oldest first. The customer's handle, never their number, and when the counter phone last checked in |
+| `GET /admin/claims/{code}` | admin, reviewer | One claim |
+| `GET /admin/claims/{code}/photo` | admin, reviewer | The image, fetched from WhatsApp now (`Cache-Control: no-store`). 410 once WhatsApp no longer has it, or in dry-run mode |
+| `POST /admin/claims/{code}/approve` | admin, reviewer | Checks the day's limits again, then adds the visit |
+| `POST /admin/claims/{code}/reject` | admin, reviewer | `{reason}` (3–200 characters), shown to the customer |
+
+The customer hears the result on WhatsApp only while that is a free reply (within 24 hours of their
+own last message); otherwise it shows in their passport. No paid templates.
+
+## Leaderboards
+
+Ranks live in Redis per city, this month (India time) and all time, and points go on the board of
+the city the visit happened in. Postgres (`points_ledger`) is the truth: boards are rebuilt from it
+at startup and every `LEADERBOARD_REBUILD_INTERVAL_SECONDS`, so an emptied Redis repairs itself. To
+do it now: `python -m app.cli rebuild-leaderboards`.
+
+**Rank decay** (team decision, provisional; the rate is ours, in `app/modules/leaderboards/decay.py`):
+after 15 days without a Notch, the points that count for rank drop 10% a week (day 16: 90%, day 23:
+80%... down to 0%), and the next Notch brings them all back. The points a customer earned never
+change: the passport shows them all and `points_ledger` is untouched, so changing the rule only takes
+a rebuild. `GET /leaderboards/me` returns `rank_points_percent` and `rank_drops_on`.
+
+Everyone with points is ranked and equal points share a rank. Customers are private by default: they
+keep their place, but their row has no name or handle until they choose to be public.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /leaderboards?city_id=&period=month&limit=50` | Public | `period` is `month` or `all`; `limit` up to 100; 60 calls a minute per IP |
+| `GET /leaderboards/me` | Logged-in customer | Their rank and points in their home city, and `is_public` |
+| `PATCH /leaderboards/me` | Logged-in customer | `{is_public}`: show or hide their name |
+
+## Tags
+
+One shared list, and only admins change it. Kinds: `cuisine`, `vibe`, `activity`, `item`. There is
+no starter list, so venues have nothing to pick until an admin adds tags.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /admin/tags`, `GET /admin/tags/{id}` | Admin or reviewer | `?kind=item` filters; paginated |
+| `POST /admin/tags` | Admin | `{name, kind}`. The slug comes from the name; a taken one is `409 tags.name_taken` |
+| `PATCH /admin/tags/{id}` | Admin | `{name?, kind?}`. The kind cannot change once in use (`409 tags.kind_locked`) |
+| `DELETE /admin/tags/{id}` | Admin | Also takes it off venues' lists. Refused once a customer has picked it (`409 tags.in_use`) |
+| `GET`, `PUT /venue/tags` | Venue owner | `{tag_ids}`: what the place is. At most 5, any kind but `item` |
+| `GET`, `PUT /venue/items` | Venue owner | `{tag_ids}` in menu order: the bot's "What did you try?" menu. At most 10, kind `item` only |
+
+Pickers get their options from `GET /api/v1/dropdowns/tags?kind=item`.
 
 ## Dropdowns
 

@@ -3,6 +3,7 @@
     python -m app.cli create-admin --email you@notchs.com --name "Your Name" [--role admin]
     python -m app.cli admin-link --email you@notchs.com     # new set-password link
     python -m app.cli seed                                  # Ahmedabad + its areas, idempotent
+    python -m app.cli rebuild-leaderboards                  # Redis ranks from the points ledger
 
 They use DATABASE_URL and DB_SCHEMA from .env, like the API. Links are printed and emailed
 (EMAIL_DRY_RUN=true only logs the email).
@@ -22,6 +23,7 @@ from app.db.session import AsyncSessionLocal, engine
 from app.modules.admin_users.models import AdminRole, AdminUser
 from app.modules.auth.admin_auth import AdminAuthService
 from app.modules.auth.emails import check_email
+from app.modules.leaderboards.service import LeaderboardService
 
 
 async def _send_invite(admin: AdminUser, auth: AdminAuthService) -> str:
@@ -66,6 +68,13 @@ async def run_seed() -> int:
     return 0
 
 
+async def rebuild_leaderboards() -> int:
+    async with AsyncSessionLocal() as session:
+        boards = await LeaderboardService(redis_client).rebuild(session)
+    print(f"Rebuilt {boards} leaderboard(s).")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -81,6 +90,7 @@ def main(argv: list[str] | None = None) -> int:
     link = commands.add_parser("admin-link", help="Send an existing admin a new set-password link")
     link.add_argument("--email", required=True)
     commands.add_parser("seed", help="Add Ahmedabad and its areas (safe to repeat)")
+    commands.add_parser("rebuild-leaderboards", help="Rebuild Redis ranks from the points ledger")
 
     args = parser.parse_args(argv)
     setup_logging()
@@ -91,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
                 return await create_admin(args.email, args.name, AdminRole(args.role))
             if args.command == "admin-link":
                 return await admin_link(args.email)
+            if args.command == "rebuild-leaderboards":
+                return await rebuild_leaderboards()
             return await run_seed()
         except ValueError as exc:  # e.g. a malformed email
             print(f"Error: {exc}")

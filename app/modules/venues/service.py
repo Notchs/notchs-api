@@ -9,10 +9,13 @@ from app.modules.venues.exceptions import (
     FoundingVenueNoTakenException,
     VenueLocationInvalidException,
     VenueNotFoundException,
+    VenueScanCodeTakenException,
     VenueSlugTakenException,
 )
+from app.modules.venues.founding import founding_spots
 from app.modules.venues.models import Venue, VenueStatus
 from app.modules.venues.repository import VenueRepository
+from app.modules.venues.scan_codes import scan_code_base, with_number
 from app.modules.venues.schemas import VenueCreate, VenueUpdate
 from app.modules.venues.slug import slugify, with_suffix
 
@@ -65,14 +68,20 @@ class VenueService(BaseService[Venue]):
 
     async def create(self, payload: VenueCreate) -> Venue:  # type: ignore[override]
         await self._check_location(payload.city_id, payload.area_id)
-        if payload.founding_venue_no is not None:
-            await self._check_founding_venue_no(payload.founding_venue_no)
-
         data = payload.model_dump()
+        if payload.founding_venue_no is not None:
+            await self._check_founding_venue_no(payload.category, payload.founding_venue_no)
+        else:
+            # The next founding place of its kind, while spots are left (venues/founding.py).
+            data["founding_venue_no"] = await self.repository.next_founding_no(payload.category)
         if payload.slug is None:
             data["slug"] = await self._free_slug(payload.city_id, slugify(payload.name))
         elif await self.repository.slug_exists(payload.city_id, payload.slug):
             raise VenueSlugTakenException()
+        if payload.scan_code is None:
+            data["scan_code"] = await self._free_scan_code(scan_code_base(payload.name))
+        elif await self.repository.scan_code_exists(payload.scan_code):
+            raise VenueScanCodeTakenException()
         return await self.repository.create(data)
 
     async def update(self, id_: uuid.UUID, payload: VenueUpdate) -> Venue:  # type: ignore[override]
@@ -84,10 +93,20 @@ class VenueService(BaseService[Venue]):
             venue.city_id, data["slug"], exclude_id=venue.id
         ):
             raise VenueSlugTakenException()
+        # Changing the scan code makes the QRs on the counter phone change too (they are drawn
+        # from it), so nothing printed goes stale.
+        if "scan_code" in data and await self.repository.scan_code_exists(
+            data["scan_code"], exclude_id=venue.id
+        ):
+            raise VenueScanCodeTakenException()
         if data.get("area_id") is not None:
             await self._check_location(venue.city_id, data["area_id"])
         if data.get("founding_venue_no") is not None:
-            await self._check_founding_venue_no(data["founding_venue_no"], exclude_id=venue.id)
+            await self._check_founding_venue_no(
+                data.get("category") or venue.category,
+                data["founding_venue_no"],
+                exclude_id=venue.id,
+            )
         return await self.repository.update(venue, data)
 
     async def set_status(
@@ -115,10 +134,21 @@ class VenueService(BaseService[Venue]):
             raise VenueLocationInvalidException()
 
     async def _check_founding_venue_no(
-        self, number: int, *, exclude_id: uuid.UUID | None = None
+        self, category: str, number: int, *, exclude_id: uuid.UUID | None = None
     ) -> None:
-        if await self.repository.founding_venue_no_exists(number, exclude_id=exclude_id):
+        if number > founding_spots(category) or await self.repository.founding_venue_no_exists(
+            category, number, exclude_id=exclude_id
+        ):
             raise FoundingVenueNoTakenException()
+
+    async def _free_scan_code(self, base: str) -> str:
+        """`KAHWA`, then `KAHWA2`, `KAHWA3`, ... until one is free."""
+        candidate = base
+        for number in range(2, MAX_SLUG_ATTEMPTS + 2):
+            if not await self.repository.scan_code_exists(candidate):
+                return candidate
+            candidate = with_number(base, number)
+        raise VenueScanCodeTakenException()
 
     async def _free_slug(self, city_id: uuid.UUID, base: str) -> str:
         """`kahwa-house`, then `kahwa-house-2`, `kahwa-house-3`, ... until one is free."""

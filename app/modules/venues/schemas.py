@@ -1,26 +1,40 @@
+import re
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal, Self
 
-from pydantic import AfterValidator, Field, StringConstraints, model_validator
+from pydantic import AfterValidator, BeforeValidator, Field, StringConstraints, model_validator
 
 from app.common.schemas import BaseSchema, EntitySchema, PublicCode
 from app.modules.locations.models import SLUG_REGEX
+from app.modules.users.models import INSTAGRAM_REGEX
+from app.modules.venues.amenities import AMENITIES
+from app.modules.venues.founding import DEFAULT_FOUNDING_SPOTS, FOUNDING_SPOTS
 from app.modules.venues.models import (
     DEFAULT_FIRST_NOTCH_SPOTS,
     DEFAULT_GEOFENCE_RADIUS_M,
-    MAX_FOUNDING_VENUE_NO,
     VenueCategory,
     VenueStatus,
 )
+from app.modules.venues.scan_codes import SCAN_CODE_REGEX, normalize_scan_code
+
+# The highest founding number any kind of place can have (venues/founding.py).
+MAX_FOUNDING_NO = max([DEFAULT_FOUNDING_SPOTS, *FOUNDING_SPOTS.values()])
 
 Day = Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 ClockTime = Annotated[str, StringConstraints(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")]
 TimeRange = tuple[ClockTime, ClockTime]
 MAX_RANGES_PER_DAY = 4
 # Columns that are NOT NULL: a partial update may leave them out but not send null.
-NOT_NULL_ON_UPDATE = ("name", "slug", "category", "geofence_radius_m", "first_notch_spots")
+NOT_NULL_ON_UPDATE = (
+    "name",
+    "slug",
+    "scan_code",
+    "category",
+    "geofence_radius_m",
+    "first_notch_spots",
+)
 
 
 def _check_opening_hours(value: dict[Day, list[TimeRange]]) -> dict[Day, list[TimeRange]]:
@@ -38,6 +52,12 @@ def _check_opening_hours(value: dict[Day, list[TimeRange]]) -> dict[Day, list[Ti
 OpeningHours = Annotated[dict[Day, list[TimeRange]], AfterValidator(_check_opening_hours)]
 
 Slug = Annotated[str, StringConstraints(pattern=SLUG_REGEX, max_length=120)]
+# KAHWA, KAAFI2: 3-10 capital letters and digits, starting with a letter. Any case accepted.
+ScanCode = Annotated[
+    str,
+    BeforeValidator(lambda v: normalize_scan_code(v) if isinstance(v, str) else v),
+    StringConstraints(pattern=SCAN_CODE_REGEX),
+]
 Latitude = Annotated[Decimal, Field(ge=-90, le=90, max_digits=9, decimal_places=6)]
 Longitude = Annotated[Decimal, Field(ge=-180, le=180, max_digits=9, decimal_places=6)]
 
@@ -48,6 +68,7 @@ class VenueCreate(BaseSchema):
     name: str = Field(min_length=1, max_length=120)
     # Generated from the name when left out.
     slug: Slug | None = None
+    scan_code: ScanCode | None = None
     category: VenueCategory
     address: str | None = None
     landmark: str | None = Field(None, max_length=120)
@@ -57,7 +78,9 @@ class VenueCreate(BaseSchema):
     description: str | None = Field(None, max_length=160)
     photo_s3_key: str | None = Field(None, max_length=255)
     opening_hours: OpeningHours | None = None
-    founding_venue_no: int | None = Field(None, ge=1, le=MAX_FOUNDING_VENUE_NO)
+    founding_venue_no: int | None = Field(
+        None, ge=1, le=max(FOUNDING_SPOTS.values(), default=DEFAULT_FOUNDING_SPOTS)
+    )
     first_notch_spots: int = Field(DEFAULT_FIRST_NOTCH_SPOTS, ge=0)
     free_until: date | None = None
     monthly_fee_paise: int | None = Field(None, ge=0)
@@ -75,6 +98,7 @@ class VenueUpdate(BaseSchema):
     area_id: uuid.UUID | None = None
     name: str | None = Field(None, min_length=1, max_length=120)
     slug: Slug | None = None
+    scan_code: ScanCode | None = None
     category: VenueCategory | None = None
     address: str | None = None
     landmark: str | None = Field(None, max_length=120)
@@ -84,7 +108,9 @@ class VenueUpdate(BaseSchema):
     description: str | None = Field(None, max_length=160)
     photo_s3_key: str | None = Field(None, max_length=255)
     opening_hours: OpeningHours | None = None
-    founding_venue_no: int | None = Field(None, ge=1, le=MAX_FOUNDING_VENUE_NO)
+    founding_venue_no: int | None = Field(
+        None, ge=1, le=max(FOUNDING_SPOTS.values(), default=DEFAULT_FOUNDING_SPOTS)
+    )
     first_notch_spots: int | None = Field(None, ge=0)
     free_until: date | None = None
     monthly_fee_paise: int | None = Field(None, ge=0)
@@ -108,6 +134,7 @@ class VenueOut(EntitySchema):
     """Full venue, for admins and the venue's own dashboard."""
 
     venue_code: PublicCode
+    scan_code: str
     city_id: uuid.UUID
     area_id: uuid.UUID | None
     name: str
@@ -145,3 +172,105 @@ class VenuePublicOut(BaseSchema):
     photo_s3_key: str | None
     opening_hours: OpeningHours | None
     founding_venue_no: int | None
+
+
+class VenueProfileOut(BaseSchema):
+    """The owner's own place (venues/profile.py)."""
+
+    venue_code: str
+    name: str
+    category: VenueCategory
+    # "café", "theatre"...
+    niche: str
+    scan_code: str
+    status: VenueStatus
+    city: str
+    area_id: uuid.UUID | None
+    area: str | None
+    address: str | None
+    landmark: str | None
+    # The one-line tagline; `about` is the longer text.
+    description: str | None
+    about: str | None
+    menu_url: str | None
+    website_url: str | None
+    instagram_handle: str | None
+    contact_phone: str | None
+    amenities: list[str]
+    visible_on_discover: bool
+    opening_hours: dict[str, list[list[str]]] | None
+    # What the form offers: the areas of its city, and the amenities to pick from.
+    area_options: list[AreaOption]
+    amenity_options: list[str]
+
+
+class AreaOption(BaseSchema):
+    id: uuid.UUID
+    name: str
+
+
+def _web_link(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    value = value.strip()
+    if not re.fullmatch(r"https?://[^\s]{3,}", value, flags=re.IGNORECASE):
+        raise ValueError("Enter a full link starting with https://")
+    return value
+
+
+def _instagram(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    value = value.strip().removeprefix("@").lower()
+    if not re.fullmatch(INSTAGRAM_REGEX, value):
+        raise ValueError("Instagram usernames use letters, numbers, dots and underscores")
+    return value
+
+
+def _amenities(value: list[str] | None) -> list[str] | None:
+    if value is None:
+        return None
+    unknown = [item for item in value if item not in AMENITIES]
+    if unknown:
+        raise ValueError(f"Not an amenity Notchs offers: {', '.join(unknown)}")
+    return [item for item in AMENITIES if item in value]  # in the usual order, once each
+
+
+WebLink = Annotated[str | None, Field(max_length=300), AfterValidator(_web_link)]
+
+
+class VenueProfileUpdate(BaseSchema):
+    """What the owner may change. Kind of place, scan code and anything billing are not here."""
+
+    name: str | None = Field(None, min_length=2, max_length=120)
+    description: str | None = Field(None, max_length=160)
+    address: str | None = Field(None, max_length=300)
+    landmark: str | None = Field(None, max_length=120)
+    area_id: uuid.UUID | None = None
+    opening_hours: OpeningHours | None = None
+    about: str | None = Field(None, max_length=1000)
+    menu_url: WebLink = None
+    website_url: WebLink = None
+    instagram_handle: Annotated[str | None, Field(max_length=31), AfterValidator(_instagram)] = None
+    contact_phone: str | None = Field(None, pattern=r"^[0-9+() -]{6,20}$")
+    amenities: Annotated[list[str] | None, AfterValidator(_amenities)] = None
+    visible_on_discover: bool | None = None
+
+    @model_validator(mode="after")
+    def _not_null(self) -> Self:
+        for field in ("name", "visible_on_discover"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} can't be empty")
+        return self
+
+
+class VenueBillingOut(BaseSchema):
+    # Nothing is charged during the free months; the subscription amount isn't decided yet.
+    amount_due_paise: int
+    free_months: int
+    # This place's founding number within its kind, or None if the spots were gone.
+    founding_no: int | None
+    founding_spots: int
+    founding_spots_left: int
+    founding_discount_percent: int
+    niche: str

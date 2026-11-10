@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     EMAIL_DRY_RUN: bool = True
     RESEND_API_KEY: SecretStr | None = None
     EMAIL_FROM: str = "Notchs <no-reply@notchs.com>"
+    # Local and development only: send to this SMTP server (Mailpit) instead of Resend.
+    SMTP_HOST: str | None = None
+    SMTP_PORT: int = 1025
 
     # Where emailed links point: the venue app's /set-password page, for example.
     VENUE_APP_URL: str = "http://localhost:3000"
@@ -108,9 +111,16 @@ class Settings(BaseSettings):
     # token is any random string, entered in Meta's "Configure Webhooks" form too.
     WHATSAPP_APP_SECRET: SecretStr | None = None
     WHATSAPP_VERIFY_TOKEN: SecretStr | None = None
+    # The number customers message, digits only with the country code (e.g. 15556755530 for the
+    # test number). Counter phones put it in their scan QR.
+    WHATSAPP_PUBLIC_NUMBER: str | None = None
+    # Public https image sent with a stamp. Empty = the stamp is a text message.
+    WHATSAPP_STAMP_IMAGE_URL: str | None = None
     # How often the API looks for incoming messages left unhandled (e.g. after a restart).
     # 0 turns the sweep off.
     WHATSAPP_SWEEP_INTERVAL_SECONDS: float = 60
+    # How often leaderboards are rebuilt from the ledger, from startup on. 0 turns it off.
+    LEADERBOARD_REBUILD_INTERVAL_SECONDS: float = 3600
 
     @field_validator("REDIS_URL")
     @classmethod
@@ -159,6 +169,8 @@ class Settings(BaseSettings):
             raise ValueError("TOTP_ENCRYPTION_KEY must be set to a real Fernet key")
         if self.TURNSTILE_DISABLED:
             raise ValueError("TURNSTILE_DISABLED is only allowed in local and development")
+        if self.SMTP_HOST:
+            raise ValueError("SMTP_HOST is only allowed in local and development")
         if not self.EMAIL_DRY_RUN and self.RESEND_API_KEY is None:
             raise ValueError("RESEND_API_KEY is required when EMAIL_DRY_RUN is false")
         if self.is_production and self.WHATSAPP_DRY_RUN:
@@ -168,6 +180,9 @@ class Settings(BaseSettings):
             raise ValueError(
                 "WHATSAPP_APP_SECRET and WHATSAPP_VERIFY_TOKEN are required in production"
             )
+        if self.is_production and not self.WHATSAPP_PUBLIC_NUMBER:
+            # Without it the counter phones cannot show a scan QR.
+            raise ValueError("WHATSAPP_PUBLIC_NUMBER is required in production")
         if self.is_production and self.EMAIL_DRY_RUN:
             raise ValueError("EMAIL_DRY_RUN must be false in production")
         for name in ("VENUE_APP_URL", "ADMIN_APP_URL", "CUSTOMER_APP_URL"):
@@ -189,8 +204,18 @@ class Settings(BaseSettings):
                 "WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN are required when "
                 "WHATSAPP_DRY_RUN is false"
             )
+        if self.WHATSAPP_PUBLIC_NUMBER is not None and not re.fullmatch(
+            r"[1-9][0-9]{7,14}", self.WHATSAPP_PUBLIC_NUMBER
+        ):
+            raise ValueError("WHATSAPP_PUBLIC_NUMBER must be digits with the country code")
+        if self.WHATSAPP_STAMP_IMAGE_URL and not self.WHATSAPP_STAMP_IMAGE_URL.startswith(
+            "https://"
+        ):
+            raise ValueError("WHATSAPP_STAMP_IMAGE_URL must be an https:// address")
         if not re.fullmatch(r"v\d+\.\d+", self.WHATSAPP_API_VERSION):
             raise ValueError("WHATSAPP_API_VERSION must look like v23.0")
+        if self.LEADERBOARD_REBUILD_INTERVAL_SECONDS < 0:
+            raise ValueError("LEADERBOARD_REBUILD_INTERVAL_SECONDS must be 0 (off) or more")
         if self.WHATSAPP_SWEEP_INTERVAL_SECONDS < 0:
             raise ValueError("WHATSAPP_SWEEP_INTERVAL_SECONDS must be 0 (off) or more")
         return self

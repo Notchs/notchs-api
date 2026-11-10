@@ -55,7 +55,8 @@ class WhatsAppMessage(Entity):
     # messages Meta never accepted (dry run, failures) get a local id ("local:<uuid>").
     wa_message_id: Mapped[str] = mapped_column(String(128), unique=True)
     direction: Mapped[str] = mapped_column(String(4))
-    phone_e164: Mapped[str] = mapped_column(String(16), index=True)
+    # None once the customer deleted their account (users/deletion.py).
+    phone_e164: Mapped[str | None] = mapped_column(String(16), index=True)
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True
     )

@@ -28,10 +28,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Entity, in_values, public_code_column
 from app.modules.locations.models import SLUG_REGEX
+from app.modules.users.models import INSTAGRAM_REGEX
+from app.modules.venues.scan_codes import MAX_LENGTH as SCAN_CODE_MAX_LENGTH
+from app.modules.venues.scan_codes import SCAN_CODE_REGEX, random_scan_code
 
 DEFAULT_GEOFENCE_RADIUS_M = 150
 DEFAULT_FIRST_NOTCH_SPOTS = 50
-MAX_FOUNDING_VENUE_NO = 30
 
 
 class VenueCategory(StrEnum):
@@ -39,7 +41,8 @@ class VenueCategory(StrEnum):
     RESTAURANT = "restaurant"
     BAR = "bar"
     HOTEL = "hotel"
-    TURF_GYM = "turf_gym"
+    TURF_GYM = "turf_gym"  # turfs, box grounds and gyms
+    THEATRE = "theatre"
     OTHER = "other"
 
 
@@ -56,6 +59,7 @@ class Venue(Entity):
     __table_args__ = (
         UniqueConstraint("city_id", "slug", name="uq_venues_city_id_slug"),
         CheckConstraint(f"slug ~ '{SLUG_REGEX}'", name="slug_format"),
+        CheckConstraint(f"scan_code ~ '{SCAN_CODE_REGEX}'", name="scan_code_format"),
         # Stored as text + CHECK, not a Postgres enum: adding a value is a plain migration.
         CheckConstraint(in_values("category", VenueCategory), name="category_valid"),
         CheckConstraint(in_values("status", VenueStatus), name="status_valid"),
@@ -63,9 +67,11 @@ class Venue(Entity):
         CheckConstraint("longitude BETWEEN -180 AND 180", name="longitude_range"),
         CheckConstraint("(latitude IS NULL) = (longitude IS NULL)", name="coordinates_paired"),
         CheckConstraint("geofence_radius_m > 0", name="geofence_radius_positive"),
-        CheckConstraint(
-            f"founding_venue_no BETWEEN 1 AND {MAX_FOUNDING_VENUE_NO}",
-            name="founding_venue_no_range",
+        CheckConstraint("founding_venue_no >= 1", name="founding_venue_no_positive"),
+        CheckConstraint(f"instagram_handle ~ '{INSTAGRAM_REGEX}'", name="instagram_handle_format"),
+        # Numbered within each kind of place (venues/founding.py).
+        UniqueConstraint(
+            "category", "founding_venue_no", name="uq_venues_category_founding_venue_no"
         ),
         CheckConstraint("first_notch_spots >= 0", name="first_notch_spots_non_negative"),
         CheckConstraint("monthly_fee_paise >= 0", name="monthly_fee_paise_non_negative"),
@@ -73,6 +79,12 @@ class Venue(Entity):
 
     # Public id shown to people (README, "IDs and public codes"). Not in the spec sheet.
     venue_code: Mapped[str] = public_code_column("VEN")
+    # What customers send to get notched: "Hey Notchs!, get me notched. KAHWA-482913".
+    # Made from the name when the venue is created (scan_codes.py); unique; admins may change it.
+    # Not in the spec sheet (it had `code`, e.g. KAAFI-SBR; a hyphen now separates the live code).
+    scan_code: Mapped[str] = mapped_column(
+        String(SCAN_CODE_MAX_LENGTH), unique=True, default=random_scan_code
+    )
 
     city_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("cities.id", ondelete="RESTRICT"), index=True
@@ -97,6 +109,18 @@ class Venue(Entity):
     )
     # One line shown on the venue page.
     description: Mapped[str | None] = mapped_column(String(160))
+    # The longer "about" text on the venue page (`description` is its one-line tagline).
+    about: Mapped[str | None] = mapped_column(Text)
+    # Links and contact the owner shows on their venue page (venues/profile.py).
+    menu_url: Mapped[str | None] = mapped_column(String(300))
+    website_url: Mapped[str | None] = mapped_column(String(300))
+    instagram_handle: Mapped[str | None] = mapped_column(String(30))
+    # The place's own public number, as the owner writes it (never a customer's).
+    contact_phone: Mapped[str | None] = mapped_column(String(20))
+    # From AMENITIES in venues/profile.py, e.g. ["Wi-Fi", "Parking"].
+    amenities: Mapped[list[str] | None] = mapped_column(JSONB)
+    # Whether the place may appear on Discover once it opens.
+    visible_on_discover: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     # S3 object key, never a full URL.
     photo_s3_key: Mapped[str | None] = mapped_column(String(255))
     # {"mon": [["08:00", "23:00"]], ...} in IST. Validated by `schemas.OpeningHours`.
@@ -107,8 +131,9 @@ class Venue(Entity):
         server_default=VenueStatus.PENDING.value,
         index=True,
     )
-    # 1-30 only, a real "founding venue" number.
-    founding_venue_no: Mapped[int | None] = mapped_column(Integer, unique=True)
+    # Its place among the first places of its kind to join (venues/founding.py): #1 to #100
+    # (#200 for turfs), 25% off for life. None after the founding spots are gone.
+    founding_venue_no: Mapped[int | None] = mapped_column(Integer)
     # How many customers can get the First Notch badge at this venue.
     first_notch_spots: Mapped[int] = mapped_column(
         Integer,

@@ -8,8 +8,12 @@ from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, 
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Entity, in_values
+from app.modules.users.handles import HANDLE_REGEX, random_handle
 
 MAX_FOUNDING_MEMBER_NO = 500
+# Instagram usernames: letters, digits, dots and underscores, at most 30. Stored lowercase,
+# without the "@".
+INSTAGRAM_REGEX = r"^[a-z0-9._]{1,30}$"
 
 
 class UserTheme(StrEnum):
@@ -32,14 +36,22 @@ class User(Entity):
         ),
         CheckConstraint(in_values("theme", UserTheme), name="theme_valid"),
         CheckConstraint(in_values("status", UserStatus), name="status_valid"),
+        CheckConstraint(f"handle ~ '{HANDLE_REGEX}'", name="handle_format"),
+        CheckConstraint(f"instagram_handle ~ '{INSTAGRAM_REGEX}'", name="instagram_handle_format"),
+        # Only a deleted account has no number (users/deletion.py).
+        CheckConstraint(
+            "phone_e164 IS NOT NULL OR deleted_at IS NOT NULL", name="phone_unless_deleted"
+        ),
     )
 
-    # Login identity, e.g. +919876543210. Never shown to venues.
-    phone_e164: Mapped[str] = mapped_column(String(16), unique=True)
-    # Asked the first time the passport opens. Shown on the Notch Card.
+    # Login identity, e.g. +919876543210. Never shown to venues. None once deleted.
+    phone_e164: Mapped[str | None] = mapped_column(String(16), unique=True)
+    # From the WhatsApp profile name on the first message; shown on the leaderboard and the
+    # Notch Card. Not unique. Customers may change it on the website.
     name: Mapped[str | None] = mapped_column(String(60))
-    # Only asked when the user goes public.
-    handle: Mapped[str | None] = mapped_column(String(30), unique=True)
+    # Unique, made automatically from the name: riya.m4821 (users/handles.py). Customers may
+    # change it later. The random default only applies to rows made outside the bot.
+    handle: Mapped[str] = mapped_column(String(30), unique=True, default=lambda: random_handle())
     # Home city, set from the first scanned venue.
     city_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("cities.id", ondelete="SET NULL"), index=True
@@ -60,7 +72,12 @@ class User(Entity):
     status: Mapped[str] = mapped_column(
         String(12), default=UserStatus.ACTIVE, server_default=UserStatus.ACTIVE.value, index=True
     )
+    # Given on the website. Venues see it only while `show_instagram_to_venues` is on.
+    instagram_handle: Mapped[str | None] = mapped_column(String(30))
+    show_instagram_to_venues: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
     # Last scan or app open.
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Set on a DELETE request; a job wipes the personal data.
+    # When the account was deleted; its personal data is wiped then (users/deletion.py).
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
