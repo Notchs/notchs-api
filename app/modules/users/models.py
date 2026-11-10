@@ -38,10 +38,14 @@ class User(Entity):
         CheckConstraint(in_values("status", UserStatus), name="status_valid"),
         CheckConstraint(f"handle ~ '{HANDLE_REGEX}'", name="handle_format"),
         CheckConstraint(f"instagram_handle ~ '{INSTAGRAM_REGEX}'", name="instagram_handle_format"),
+        # Only a deleted account has no number (users/deletion.py).
+        CheckConstraint(
+            "phone_e164 IS NOT NULL OR deleted_at IS NOT NULL", name="phone_unless_deleted"
+        ),
     )
 
-    # Login identity, e.g. +919876543210. Never shown to venues.
-    phone_e164: Mapped[str] = mapped_column(String(16), unique=True)
+    # Login identity, e.g. +919876543210. Never shown to venues. None once deleted.
+    phone_e164: Mapped[str | None] = mapped_column(String(16), unique=True)
     # From the WhatsApp profile name on the first message; shown on the leaderboard and the
     # Notch Card. Not unique. Customers may change it on the website.
     name: Mapped[str | None] = mapped_column(String(60))
@@ -75,5 +79,5 @@ class User(Entity):
     )
     # Last scan or app open.
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # Set on a DELETE request; a job wipes the personal data.
+    # When the account was deleted; its personal data is wiped then (users/deletion.py).
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

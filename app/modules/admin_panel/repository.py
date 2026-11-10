@@ -166,7 +166,8 @@ class AdminPanelRepository:
                 func.coalesce(points.c.points, 0).label("points"),
             )
             .join(Venue, Venue.id == Visit.venue_id)
-            .outerjoin(User, User.id == Visit.user_id)
+            # A deleted customer's visits stay, with no handle.
+            .outerjoin(User, (User.id == Visit.user_id) & User.deleted_at.is_(None))
             .outerjoin(points, points.c.visit_id == Visit.id)
             .order_by(Visit.visited_at.desc(), Visit.id)
         )

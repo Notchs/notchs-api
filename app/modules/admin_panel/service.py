@@ -17,6 +17,7 @@ from app.core.logging import get_logger
 from app.modules.admin_panel.exceptions import (
     AdminCounterNotPairedException,
     AdminCustomerNotFoundException,
+    AdminDeleteNotConfirmedException,
     AdminNotchNotFoundException,
     AdminStatusChangeNotAllowedException,
     AdminVenueNotFoundException,
@@ -33,6 +34,7 @@ from app.modules.admin_panel.schemas import (
 from app.modules.admin_users.models import AdminUser
 from app.modules.leaderboards.service import LeaderboardService
 from app.modules.scans.models import Visit, VisitStatus
+from app.modules.users.deletion import delete_customer
 from app.modules.users.models import User, UserStatus
 from app.modules.venues.counters import ONLINE_WITHIN
 from app.modules.venues.models import Venue, VenueStatus
@@ -204,6 +206,16 @@ class AdminPanelService:
         user.status = target
         await self.session.flush()
         logger.info("Admin %s set customer %s to %s", admin.id, user.id, target)
+
+    async def delete_customer(self, admin: AdminUser, handle: str, confirm: str) -> None:
+        """When a customer asks support to delete their account (users/deletion.py)."""
+        if confirm.strip().lower().lstrip("@") != handle:
+            raise AdminDeleteNotConfirmedException()
+        user = await self.repository.customer_by_handle(handle)
+        if user is None or user.status == UserStatus.DELETED:
+            raise AdminCustomerNotFoundException()
+        await delete_customer(self.session, self.redis, user.id)
+        logger.info("Admin %s deleted customer %s on request", admin.id, user.id)
 
 
 def _notch_row(

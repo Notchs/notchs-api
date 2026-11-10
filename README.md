@@ -354,6 +354,20 @@ The text goes through the same steps as a real WhatsApp message, and the respons
 bot's replies (`data.replies`, buttons shown as `[title]` lines), login links included.
 Nothing is sent to Meta.
 
+## Deleting an account
+
+A customer deletes their account from the passport (`POST /me/delete` with `{"confirm": "DELETE"}`),
+or an admin does it when they ask support (`POST /admin/customers/{handle}/delete` with the handle
+typed again; `admin` role). It is permanent (team decision) and happens at once
+(`app/modules/users/deletion.py`):
+
+- **Deleted:** phone number, name, Instagram, area, consent, logins, bill-photo claims, invites and
+  their Star Points, and the number, text and raw data of every WhatsApp message to or from them.
+- **Kept, anonymous (team decision):** their visits and points, so venues' past totals don't change.
+  The account row stays as an empty shell (status `deleted`, random handle, no number). It is never
+  shown on leaderboards, admin lists or venue screens and can't log in.
+- A later message from the same number starts a brand-new account.
+
 ## Bill-photo claims
 
 When a counter phone is down, a customer can still get the Notch: they start a claim in their

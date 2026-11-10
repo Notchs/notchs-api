@@ -5,14 +5,24 @@ Rank and leaderboard visibility stay in `/leaderboards/me`.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 
 from app.common.dependencies import DBSession, RedisClient
 from app.common.schemas import CustomResponse, PaginatedResponse
+from app.modules.auth.cookies import clear_session_cookies
 from app.modules.auth.dependencies import CurrentUser
+from app.modules.auth.enums import SubjectType
 from app.modules.passport.exceptions import PhoneChangeRateLimitedException
-from app.modules.passport.schemas import MeOut, MeUpdate, NotchOut, PhoneChangeOut, RewardOut
+from app.modules.passport.schemas import (
+    DeleteMeIn,
+    MeOut,
+    MeUpdate,
+    NotchOut,
+    PhoneChangeOut,
+    RewardOut,
+)
 from app.modules.passport.service import PassportService
+from app.modules.users.deletion import delete_customer
 from app.modules.users.phone_change import COMMAND, PhoneChangeService
 
 router = APIRouter(prefix="/me", tags=["Passport"])
@@ -83,3 +93,20 @@ async def phone_change(
             whatsapp_link=started.whatsapp_link,
         ),
     )
+
+
+@router.post(
+    "/delete",
+    response_model=CustomResponse[None],
+    summary='Delete my account for good (send {"confirm": "DELETE"}); logs me out',
+)
+async def delete_me(
+    body: DeleteMeIn,
+    user: CurrentUser,
+    session: DBSession,
+    redis: RedisClient,
+    response: Response,
+) -> CustomResponse[None]:
+    await delete_customer(session, redis, user.id)
+    clear_session_cookies(response, SubjectType.USER)
+    return CustomResponse(message="Your account and personal data are deleted.")

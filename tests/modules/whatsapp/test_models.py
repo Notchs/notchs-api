@@ -12,7 +12,7 @@ SHEET_COLUMNS = {
     "id": False,
     "wa_message_id": False,
     "direction": False,
-    "phone_e164": False,
+    "phone_e164": True,  # wiped when the customer deletes their account
     "user_id": True,
     "message_type": False,
     "template_name": True,
