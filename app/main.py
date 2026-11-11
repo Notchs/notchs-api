@@ -9,12 +9,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
+from app.clients.email import EmailClient
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.redis import check_redis, redis_client
 from app.db.session import AsyncSessionLocal, check_connection, engine
 from app.middleware.request_context import RequestContextMiddleware
+from app.modules.admin_users.bootstrap import ensure_first_admin
 from app.modules.leaderboards.service import run_rebuilder
 from app.modules.whatsapp.processor import get_inbound_processor, run_sweeper
 
@@ -51,6 +53,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "Connected to Redis at %s (db %s, version %s)", cache["host"], cache["db"], cache["version"]
     )
+    if settings.FIRST_ADMIN_EMAIL:
+        # Never stops the API from starting; the log says what happened.
+        try:
+            async with AsyncSessionLocal() as session:
+                await ensure_first_admin(session, redis_client, EmailClient())
+        except Exception:
+            logger.exception("Could not create the first admin from FIRST_ADMIN_EMAIL")
     sweeper = None
     if settings.WHATSAPP_SWEEP_INTERVAL_SECONDS > 0:
         sweeper = asyncio.create_task(
