@@ -208,7 +208,7 @@ production refuse to start until the real values are set.
 | `EMAIL_DRY_RUN` | `true`: log emails (with their codes and links) instead of sending. Must be `false` in production. |
 | `RESEND_API_KEY`, `EMAIL_FROM` | Resend account key and sender. Needed when `EMAIL_DRY_RUN=false`, unless `SMTP_HOST` is set. |
 | `SMTP_HOST`, `SMTP_PORT` | Local and development only: send to this server instead of Resend. Set `SMTP_HOST=mailpit` with `EMAIL_DRY_RUN=false` to read every email at http://localhost:8025. Mailpit delivers nothing. |
-| `VENUE_APP_URL`, `ADMIN_APP_URL`, `CUSTOMER_APP_URL` | Where links point, e.g. `https://venues.notchs.com`, `https://admin.notchs.com`, `https://notchs.com`. https outside local/development. |
+| `VENUE_APP_URL`, `ADMIN_APP_URL`, `CUSTOMER_APP_URL` | Where links point, e.g. `https://venue.notchs.com`, `https://admin.notchs.com`, `https://www.notchs.com`. https outside local/development. |
 | `ADMIN_NOTIFY_EMAIL` | Optional. Gets a "New venue application" email (no applicant contact details in it). |
 | `TURNSTILE_SECRET` | Cloudflare Turnstile secret for the CAPTCHA on public forms. |
 | `TURNSTILE_DISABLED` | `true` skips the CAPTCHA. Local and development only. |
@@ -306,6 +306,12 @@ docker compose exec api python -m app.cli admin-link --email you@notchs.com   # 
 
 They use the database and schema in `.env`. `create-admin` prints the set-password link (and emails
 it unless `EMAIL_DRY_RUN=true`); `--role reviewer` makes a view-only admin.
+
+**The first admin without a shell** (e.g. Render's free plan): set `FIRST_ADMIN_EMAIL` (and
+`FIRST_ADMIN_NAME`) on the API and redeploy. At startup, only while no admin exists at all, that
+address becomes an admin and is emailed a set-password link (`app/modules/admin_users/bootstrap.py`).
+Once any admin exists it does nothing; add more admins in admin Settings. If the email doesn't
+arrive, use "Forgot password" on the admin login page.
 
 ## WhatsApp webhook
 

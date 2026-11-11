@@ -114,6 +114,12 @@ class Settings(BaseSettings):
     # The number customers message, digits only with the country code (e.g. 15556755530 for the
     # test number). Counter phones put it in their scan QR.
     WHATSAPP_PUBLIC_NUMBER: str | None = None
+
+    # The very first admin, for a deploy with no shell to run `create-admin` (admin_users/
+    # bootstrap.py): at startup, only while no admin exists, this address becomes an admin and
+    # gets an emailed set-password link. Ignored once any admin exists.
+    FIRST_ADMIN_EMAIL: str | None = None
+    FIRST_ADMIN_NAME: str = "Notchs admin"
     # Public https image sent with a stamp. Empty = the stamp is a text message.
     WHATSAPP_STAMP_IMAGE_URL: str | None = None
     # How often the API looks for incoming messages left unhandled (e.g. after a restart).
@@ -219,6 +225,16 @@ class Settings(BaseSettings):
         if self.WHATSAPP_SWEEP_INTERVAL_SECONDS < 0:
             raise ValueError("WHATSAPP_SWEEP_INTERVAL_SECONDS must be 0 (off) or more")
         return self
+
+    @field_validator("FIRST_ADMIN_EMAIL")
+    @classmethod
+    def _first_admin_email(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        email = value.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise ValueError("FIRST_ADMIN_EMAIL must be an email address")
+        return email
 
     @field_validator("TOTP_ENCRYPTION_KEY")
     @classmethod
