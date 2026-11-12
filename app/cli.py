@@ -21,6 +21,7 @@ from app.core.redis import redis_client
 from app.db.seed import seed
 from app.db.session import AsyncSessionLocal, engine
 from app.modules.admin_users.models import AdminRole, AdminUser
+from app.modules.admin_users.roles import built_in_role
 from app.modules.auth.admin_auth import AdminAuthService
 from app.modules.auth.emails import check_email
 from app.modules.leaderboards.service import LeaderboardService
@@ -38,7 +39,7 @@ async def create_admin(email: str, name: str, role: AdminRole) -> int:
         if await session.scalar(select(AdminUser).where(AdminUser.email == email)):
             print(f"An admin with {email} already exists. Use admin-link for a new link.")
             return 1
-        admin = AdminUser(email=email, name=name.strip(), role=role)
+        admin = AdminUser(email=email, name=name.strip(), role=await built_in_role(session, role))
         session.add(admin)
         await session.flush()
         text = await _send_invite(admin, AdminAuthService(session, redis_client))

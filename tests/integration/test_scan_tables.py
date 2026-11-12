@@ -193,6 +193,7 @@ def visit(customer: User, venue: Venue, session: ScanSession, **overrides: objec
         "notch_no": 1,
         "visit_no_at_venue": 1,
         "code_slot": 59_000_000,
+        "niche": venue.category,
     }
     return Visit(**(data | overrides))
 
@@ -296,5 +297,8 @@ async def test_points_ledger(db, venue: Venue, customer: User) -> None:
     assert sorted((r.reason, r.points) for r in rows) == [("new_venue", 2), ("visit", 10)]
     assert await rejected(db, PointsEntry(user_id=customer.id, reason="bonus", points=100))
     assert not await rejected(
-        db, PointsEntry(user_id=customer.id, reason=PointsReason.ADJUSTMENT, points=-5)
+        db,
+        PointsEntry(
+            user_id=customer.id, reason=PointsReason.ADJUSTMENT, points=-5, note="Correction"
+        ),
     )

@@ -8,6 +8,7 @@ from pydantic import Field
 from app.common.schemas import BaseSchema, PublicCode
 from app.modules.admin_users.models import AdminRole
 from app.modules.auth.emails import Email
+from app.modules.auth.enums import AccountStatus
 
 
 class AdminUserOut(BaseSchema):
@@ -16,6 +17,9 @@ class AdminUserOut(BaseSchema):
     name: str
     email: str
     role: AdminRole
+    # invited (link not used yet), active or disabled.
+    status: AccountStatus
+    # Kept for the panel: false only when disabled.
     is_active: bool
     # Whether they have set a password yet (a new admin hasn't until they open their link).
     has_password: bool

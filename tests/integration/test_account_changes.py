@@ -9,7 +9,8 @@ from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.modules.admin_users.models import AdminUser
+from app.modules.admin_users.models import AdminRole, AdminUser
+from app.modules.admin_users.roles import built_in_role
 from app.modules.auth.admin_auth import AdminAuthService
 from app.modules.auth.password_auth import MAX_LOGIN_FAILURES
 from app.modules.auth.venue_auth import VenueAuthService
@@ -142,7 +143,11 @@ async def test_change_password_needs_a_login(api: AsyncClient) -> None:
 
 
 async def test_admin_change_password(db: AsyncSession, redis, api: AsyncClient, outbox) -> None:
-    admin = AdminUser(name="Abhishek", email=f"a-{uuid.uuid4().hex[:6]}@notchs.com")
+    admin = AdminUser(
+        name="Abhishek",
+        email=f"a-{uuid.uuid4().hex[:6]}@notchs.com",
+        role=await built_in_role(db, AdminRole.ADMIN),
+    )
     db.add(admin)
     await db.flush()
     email = admin.email

@@ -78,6 +78,7 @@ async def customer(db: AsyncSession, status: str = UserStatus.ACTIVE) -> User:
     user = User(
         phone_e164=phone(),
         status=status,
+        blocked_reason="Fake bills (test)" if status == UserStatus.BLOCKED else None,
         consent_at=datetime.now(UTC),
         consent_version=CONSENT_VERSION,
     )

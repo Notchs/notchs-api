@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import INET
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import InsertOnlyEntity, in_values
-from app.modules.auth.enums import SubjectType, TokenType
+from app.modules.auth.enums import RevokeReason, SubjectType, TokenType
 
 
 def _subject_matches(subject: SubjectType, column: str) -> str:
@@ -37,6 +37,11 @@ class AuthToken(InsertOnlyEntity):
             name="subject_matches_type",
         ),
         CheckConstraint("attempts >= 0", name="attempts_non_negative"),
+        CheckConstraint(in_values("revoke_reason", RevokeReason), name="revoke_reason_valid"),
+        # Tokens revoked before 0012 have no reason; new revocations always give one.
+        CheckConstraint(
+            "revoke_reason IS NULL OR revoked_at IS NOT NULL", name="revoke_reason_when_revoked"
+        ),
     )
 
     subject_type: Mapped[str] = mapped_column(String(16), index=True)
@@ -56,6 +61,8 @@ class AuthToken(InsertOnlyEntity):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Why it was revoked: set together with `revoked_at`.
+    revoke_reason: Mapped[str | None] = mapped_column(String(20))
     ip_address: Mapped[str | None] = mapped_column(INET)
     user_agent: Mapped[str | None] = mapped_column(String(255))
     # Not in the sheet. Refresh tokens only: every rotation keeps the family, and reuse of an

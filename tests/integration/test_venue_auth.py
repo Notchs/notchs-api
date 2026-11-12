@@ -11,6 +11,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.modules.auth.enums import AccountStatus
 from app.modules.auth.models import AuthToken
 from app.modules.auth.tokens import hash_token
 from app.modules.auth.venue_auth import MAX_LOGIN_FAILURES, VenueAuthService
@@ -220,7 +221,7 @@ async def test_inactive_member_with_right_password(
 ) -> None:
     email = member.email
     await set_password(api, await welcome_token(db, redis, member, venue))
-    member.is_active = False
+    member.status = AccountStatus.DISABLED
     await db.commit()
 
     response = await login(api, email)
@@ -273,7 +274,7 @@ async def test_forgot_password_for_inactive_member_sends_nothing(
     api: AsyncClient, db, outbox, member: VenueMember
 ) -> None:
     email = member.email
-    member.is_active = False
+    member.status = AccountStatus.DISABLED
     await db.commit()
 
     assert (await forgot(api, email)).status_code == 202

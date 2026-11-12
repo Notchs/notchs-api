@@ -21,6 +21,11 @@ SHEET_COLUMNS = {
     "status": False,
     "error_code": True,
     "processed_at": True,  # added for the retry sweep
+    # Schema review (0012): the reply link, Meta's error title, delivery times.
+    "in_reply_to_id": True,
+    "error_title": True,
+    "delivered_at": True,
+    "read_at": True,
     "created_at": False,
     "updated_at": False,
 }

@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import Field
 
 from app.common.schemas import BaseSchema, PublicCode
+from app.modules.claims.models import ClaimRejectCode
 
 # What the customer sees: a claim still waiting for its photo after its day is "expired".
 CustomerClaimStatus = Literal["awaiting_photo", "expired", "in_review", "approved", "rejected"]
@@ -67,6 +68,8 @@ class AdminClaimOut(BaseSchema):
 class ClaimRejectIn(BaseSchema):
     # Sent to the customer.
     reason: str = Field(min_length=3, max_length=200)
+    # For counting why claims fail. Optional for now so the admin panel keeps working.
+    code: ClaimRejectCode = ClaimRejectCode.OTHER
 
 
 class ClaimDecisionOut(BaseSchema):

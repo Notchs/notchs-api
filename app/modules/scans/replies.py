@@ -58,7 +58,8 @@ def rejection_text(
     ("café") for the one-per-niche refusal."""
     place = venue_name or "this venue"
     match reason:
-        case RejectReason.WRONG_CODE:
+        # Too many wrong codes reads the same as a wrong code: someone guessing learns nothing.
+        case RejectReason.WRONG_CODE | RejectReason.TOO_MANY_ATTEMPTS:
             return "That code didn't match. Please scan the QR at the counter again."
         case RejectReason.EXPIRED_CODE:
             return "That code has expired. Please scan the QR again."

@@ -23,7 +23,14 @@ from app.modules.auth.tokens import hash_token
 from app.modules.auth.venue_auth import VenueAuthService
 from app.modules.locations.models import City
 from app.modules.venues.counters import MAX_PAIRING_LINKS_PER_HOUR
-from app.modules.venues.models import CounterDevice, Venue, VenueMember, VenueStatus
+from app.modules.venues.models import (
+    CounterDevice,
+    CounterRevokeReason,
+    CounterStatus,
+    Venue,
+    VenueMember,
+    VenueStatus,
+)
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -136,6 +143,12 @@ async def test_pair_end_to_end(api: AsyncClient, db: AsyncSession, owner) -> Non
     venue = await db.get(Venue, owner["venue_id"])
     await db.refresh(venue)
     assert venue.status == VenueStatus.COUNTER_LIVE  # the first pairing puts the venue live
+    assert venue.live_at is not None
+    counter = await db.scalar(
+        select(CounterDevice).where(CounterDevice.venue_id == owner["venue_id"])
+    )
+    await db.refresh(counter)
+    assert counter.status == CounterStatus.ACTIVE
 
 
 async def test_secret_is_stored_encrypted(api: AsyncClient, db: AsyncSession, owner) -> None:
@@ -230,7 +243,13 @@ async def test_unpair(api: AsyncClient, db: AsyncSession, owner) -> None:
     history = await db.scalars(
         select(CounterDevice).where(CounterDevice.venue_id == owner["venue_id"])
     )
-    assert len(history.all()) == 2  # the removed one is kept, revoked
+    rows = history.all()
+    assert len(rows) == 2  # the removed one is kept, revoked
+    removed_row = next(r for r in rows if str(r.id) == first.json()["data"]["counter_id"])
+    await db.refresh(removed_row)
+    assert removed_row.status == CounterStatus.REVOKED
+    assert removed_row.revoke_reason == CounterRevokeReason.REMOVED_BY_VENUE
+    assert removed_row.revoked_by_member_id is not None
 
 
 async def test_rename(api: AsyncClient, owner) -> None:

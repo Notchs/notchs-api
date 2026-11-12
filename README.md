@@ -153,6 +153,11 @@ Rules for the shared DB:
   `alembic downgrade` against it by hand. To undo a change, write a new forward migration.
 - Work in your own `dev_<name>` schema and never touch anyone else's.
 - Add columns as nullable or with a default first, so teammates' running code keeps working.
+- A record's state is a `status` column (text + CHECK, e.g. `active` / `disabled`), never an
+  `is_active` flag. Settings people choose (`is_public`, `visible_on_discover`) stay booleans,
+  and "when" columns (`revoked_at`, `disabled_at`) sit next to the status.
+- Backfills use real rows only. When old rows can't know a value (who removed a Notch before it
+  was recorded), leave it empty or say "Not recorded (before migration 0012)"; never make it up.
 - Never use the `neondb_owner` login in `.env`. The app connects as `notchs_app` and Alembic as
   `notchs_migrator`.
 
@@ -172,6 +177,7 @@ Rules for the shared DB:
 | `admin_users` | `admin_user_code` | `ADM` |
 | `venue_applications` | `application_code` | `APP` |
 | `visit_claims` | `claim_code` | `CLM` |
+| `admin_roles` | `admin_role_code` | `ROL` |
 
 Add a row here when a new table gets a code. A prefix is never reused or changed.
 
@@ -295,6 +301,11 @@ adds one and emails a set-password link; `PATCH /{ADM-code} {role?, is_active?}`
 or turns them off (which logs them out at once); `POST /{ADM-code}/link` emails a new link. Nobody
 can remove their own admin access and there is always an active admin. The CLI below is only
 needed for the very first admin.
+
+Each admin has a `status`: `invited` until they use their set-password link, then `active`, or
+`disabled` when turned off (with who did it and when). Roles are rows in `admin_roles`: until the
+roles screen exists there are two built-in ones, "Admin" (every permission) and "Reviewer", and
+the API's `role` (`admin` / `reviewer`) maps onto them. Venue logins have the same three statuses.
 
 ## Command-line tasks
 
@@ -422,7 +433,7 @@ or an admin does it when they ask support (`POST /admin/customers/{handle}/delet
 typed again; `admin` role). It is permanent (team decision) and happens at once
 (`app/modules/users/deletion.py`):
 
-- **Deleted:** phone number, name, Instagram, area, consent, logins, bill-photo claims, invites and
+- **Deleted:** phone number, name, Instagram, area, consent (and its stored wording), logins, bill-photo claims, invites and
   their Star Points, and the number, text and raw data of every WhatsApp message to or from them.
 - **Kept, anonymous (team decision):** their visits and points, so venues' past totals don't change.
   The account row stays as an empty shell (status `deleted`, random handle, no number). It is never
@@ -446,7 +457,7 @@ checked within that time. An approved claim is a normal visit with points, marke
 | `GET /admin/claims/{code}` | admin, reviewer | One claim |
 | `GET /admin/claims/{code}/photo` | admin, reviewer | The image, fetched from WhatsApp now (`Cache-Control: no-store`). 410 once WhatsApp no longer has it, or in dry-run mode |
 | `POST /admin/claims/{code}/approve` | admin, reviewer | Checks the day's limits again, then adds the visit |
-| `POST /admin/claims/{code}/reject` | admin, reviewer | `{reason}` (3–200 characters), shown to the customer |
+| `POST /admin/claims/{code}/reject` | admin, reviewer | `{reason}` (3–200 characters), shown to the customer, and `code` (optional, default `other`): `unreadable`, `wrong_venue`, `wrong_date`, `duplicate_bill` or `other` |
 
 The customer hears the result on WhatsApp only while that is a free reply (within 24 hours of their
 own last message); otherwise it shows in their passport. No paid templates.

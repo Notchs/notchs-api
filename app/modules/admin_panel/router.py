@@ -71,7 +71,7 @@ async def venues(
 async def set_venue_status(
     venue_code: VenueCode, body: VenueStatusIn, admin: CurrentFullAdmin, panel: PanelDep
 ) -> CustomResponse[None]:
-    await panel.set_venue_status(admin, venue_code, body.status)
+    await panel.set_venue_status(admin, venue_code, body.status, reason=body.reason)
     return CustomResponse(message="Saved.")
 
 
@@ -136,7 +136,7 @@ async def set_customer_status(
     admin: CurrentFullAdmin,
     panel: PanelDep,
 ) -> CustomResponse[None]:
-    await panel.set_customer_status(admin, handle, body.status)
+    await panel.set_customer_status(admin, handle, body.status, reason=body.reason)
     return CustomResponse(message="Saved.")
 
 

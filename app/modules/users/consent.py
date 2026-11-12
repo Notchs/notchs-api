@@ -2,7 +2,7 @@
 
 DRAFT: the team has not approved this wording or the notice page yet. Change the version whenever
 the wording changes. `users.consent_version` says which one a customer agreed to, and the exact text
-they were shown is stored with the outbound message in `whatsapp_messages`.
+they were shown is kept in `consents` (and with the outbound message in `whatsapp_messages`).
 """
 
 from app.core.config import settings

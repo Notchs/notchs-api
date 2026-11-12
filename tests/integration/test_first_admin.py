@@ -8,6 +8,7 @@ from app.clients.email import EmailSendError
 from app.core.config import settings
 from app.modules.admin_users.bootstrap import ensure_first_admin
 from app.modules.admin_users.models import AdminRole, AdminUser
+from app.modules.auth.enums import AccountStatus
 from tests.integration.test_admin import make_admin
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -66,7 +67,8 @@ async def test_with_a_password_logs_in_without_any_email(
     assert (created, again) == (True, False)
     admin = await founder(db)
     assert admin is not None
-    assert (admin.name, admin.role, admin.is_active) == ("Harsh", AdminRole.ADMIN, True)
+    assert (admin.name, admin.access, admin.status) == ("Harsh", AdminRole.ADMIN, "active")
+    assert admin.password_changed_at is not None
     assert outbox.sent == []  # no email needed
     response = await login(api)
     assert response.status_code == 200, response.text
@@ -79,7 +81,8 @@ async def test_without_a_password_emails_a_link(db, redis, outbox, first_admin) 
 
     assert await ensure_first_admin(db, redis, outbox) is True
 
-    assert (await founder(db)).password_hash is None
+    created = await founder(db)
+    assert created.password_hash is None and created.status == "invited"
     assert len(outbox.sent) == 1
     assert outbox.sent[0].to == EMAIL
     assert f"{settings.ADMIN_APP_URL}/set-password?token=" in outbox.sent[0].text
@@ -125,7 +128,7 @@ async def test_never_resets_a_password_or_revives_an_account(
     assert (await login(api)).status_code == 200
 
     admin = await founder(db)
-    admin.is_active = False
+    admin.status = AccountStatus.DISABLED
     admin.password_hash = None
     await db.commit()
     assert await ensure_first_admin(db, redis, outbox) is False

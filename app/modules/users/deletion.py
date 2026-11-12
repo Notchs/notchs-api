@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.modules.auth.models import AuthToken
 from app.modules.claims.models import VisitClaim
+from app.modules.consents.service import delete_user_consents
 from app.modules.leaderboards.service import KEY_PATTERN
 from app.modules.referrals.models import Referral, StarPointsEntry
 from app.modules.users.handles import free_handle
@@ -49,6 +50,7 @@ async def delete_customer(
     phone = user.phone_e164
 
     await session.execute(delete(AuthToken).where(AuthToken.user_id == user.id))
+    await delete_user_consents(session, user.id)
     await session.execute(delete(VisitClaim).where(VisitClaim.user_id == user.id))
     await session.execute(delete(StarPointsEntry).where(StarPointsEntry.user_id == user.id))
     await session.execute(

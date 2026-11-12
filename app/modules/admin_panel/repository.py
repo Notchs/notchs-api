@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.modules.locations.models import Area, City
 from app.modules.scans.models import PointsEntry, ScanSession, ScanStatus, Visit, VisitStatus
 from app.modules.users.models import User
-from app.modules.venue_applications.models import ApplicationStatus, VenueApplication
+from app.modules.venue_applications.models import (
+    OPEN_STATUSES,
+    VenueApplication,
+)
 from app.modules.venues.models import CounterDevice, Venue, VenueStatus
 
 
@@ -55,7 +58,7 @@ class AdminPanelRepository:
             "applications_pending": await self.count(
                 select(func.count())
                 .select_from(VenueApplication)
-                .where(VenueApplication.status == ApplicationStatus.PENDING)
+                .where(VenueApplication.status.in_(OPEN_STATUSES))
             ),
             "customers": await self.count(
                 select(func.count()).select_from(User).where(User.deleted_at.is_(None))

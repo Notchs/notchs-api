@@ -4,7 +4,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.locations.models import Area, City
+from app.modules.locations.models import Area, City, CityStatus
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
@@ -12,7 +12,10 @@ pytestmark = pytest.mark.asyncio(loop_scope="session")
 @pytest.fixture
 async def cities(db: AsyncSession) -> tuple[City, City]:
     live = City(
-        name="Ahmedabad", slug=f"ahd-{uuid.uuid4().hex[:6]}", state="Gujarat", is_active=True
+        name="Ahmedabad",
+        slug=f"ahd-{uuid.uuid4().hex[:6]}",
+        state="Gujarat",
+        status=CityStatus.LIVE,
     )
     soon = City(name="Surat", slug=f"srt-{uuid.uuid4().hex[:6]}", state="Gujarat")
     db.add_all([live, soon])

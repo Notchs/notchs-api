@@ -43,6 +43,11 @@ class WhatsAppMessage(Entity):
         CheckConstraint(in_values("direction", MessageDirection), name="direction_valid"),
         CheckConstraint(in_values("message_type", MessageType), name="message_type_valid"),
         CheckConstraint(in_values("status", MessageStatus), name="status_valid"),
+        # Paid business-initiated templates are not allowed (CLAUDE.md). Lifting this needs the
+        # team's agreement and its own migration.
+        CheckConstraint(
+            "message_type <> 'template' AND template_name IS NULL", name="no_templates"
+        ),
         # Inbound messages still waiting for the bot: what the retry sweep looks for.
         Index(
             "ix_whatsapp_messages_unprocessed",
@@ -70,3 +75,13 @@ class WhatsAppMessage(Entity):
     error_code: Mapped[str | None] = mapped_column(String(20))
     # Added: when the bot finished handling this inbound message. NULL = still to do.
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Outbound: the customer message this replies to (proof every reply is inside the 24-hour
+    # window).
+    in_reply_to_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("whatsapp_messages.id", ondelete="SET NULL")
+    )
+    # Meta's short error title next to `error_code`. Never message text.
+    error_title: Mapped[str | None] = mapped_column(String(255))
+    # From Meta's status webhooks.
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

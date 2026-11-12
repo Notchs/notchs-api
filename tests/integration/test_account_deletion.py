@@ -10,8 +10,14 @@ from sqlalchemy import func, select
 from app.modules.admin_users.models import AdminRole
 from app.modules.auth.models import AuthToken
 from app.modules.claims.models import VisitClaim
+from app.modules.consents.models import Consent
 from app.modules.leaderboards.service import ALL_TIME, board_key
-from app.modules.referrals.models import Referral, StarPointsEntry, StarPointsReason
+from app.modules.referrals.models import (
+    Referral,
+    ReferralStatus,
+    StarPointsEntry,
+    StarPointsReason,
+)
 from app.modules.scans.models import PointsEntry, Visit
 from app.modules.users.models import User, UserStatus
 from app.modules.whatsapp.models import WhatsAppMessage
@@ -83,7 +89,10 @@ async def test_delete_my_account(
     user, phone = await notched_customer(db, redis, bot_under_test)
     inviter, friend = await add_customer(db), await add_customer(db)
     invited_me = Referral(
-        referrer_id=inviter.id, referred_id=user.id, rewarded_at=datetime.now(UTC)
+        referrer_id=inviter.id,
+        referred_id=user.id,
+        rewarded_at=datetime.now(UTC),
+        status=ReferralStatus.REWARDED,
     )
     i_invited = Referral(referrer_id=user.id, referred_id=friend.id)
     db.add_all([invited_me, i_invited])
@@ -96,7 +105,9 @@ async def test_delete_my_account(
                 reason=StarPointsReason.REFERRAL,
                 points=50,
             ),
-            StarPointsEntry(user_id=user.id, reason=StarPointsReason.ADJUSTMENT, points=5),
+            StarPointsEntry(
+                user_id=user.id, reason=StarPointsReason.ADJUSTMENT, points=5, note="Thanks"
+            ),
         ]
     )
     await db.commit()
@@ -130,6 +141,7 @@ async def test_delete_my_account(
     ).all()
     assert scrubbed and all(m.body is None and m.payload is None for m in scrubbed)
     assert await count(db, AuthToken, AuthToken.user_id == user_id) == 0
+    assert await count(db, Consent, Consent.user_id == user_id) == 0
     assert await count(db, VisitClaim, VisitClaim.user_id == user_id) == 0
     assert await count(db, Referral, Referral.id.in_(referral_ids)) == 0
     assert await count(db, StarPointsEntry, StarPointsEntry.user_id == user_id) == 0

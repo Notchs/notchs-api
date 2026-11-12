@@ -175,7 +175,7 @@ async def test_a_blocked_customer_cannot_move(api: AsyncClient, db, redis) -> No
     user = await add_customer(db)
     cookies = await logged_in(api, db, redis, user)
     code = (await code_for(api, cookies)).split()[1]
-    user.status = UserStatus.BLOCKED
+    user.status, user.blocked_reason = UserStatus.BLOCKED, "Fake bills (test)"
     await db.commit()
 
     outcome, _ = await PhoneChangeService(db, redis).finish(phone(), code)

@@ -40,7 +40,14 @@ from app.modules.venues.counter_schemas import (
     TotpSettingsOut,
 )
 from app.modules.venues.exceptions import CounterNotFoundException, CounterRateLimitedException
-from app.modules.venues.models import CounterDevice, Venue, VenueMember, VenueStatus
+from app.modules.venues.models import (
+    CounterDevice,
+    CounterRevokeReason,
+    CounterStatus,
+    Venue,
+    VenueMember,
+    VenueStatus,
+)
 
 TOTP_SECRET_BYTES = 20  # 160 bits, the RFC 4226 recommendation
 ONLINE_WITHIN = timedelta(minutes=2)
@@ -128,8 +135,10 @@ class CounterService:
         """Remove the counter. Its phone stops working on its next call; the row stays as
         history and the next pairing link starts a new counter."""
         counter = await self.get(member)
+        counter.status = CounterStatus.REVOKED
         counter.revoked_at = datetime.now(UTC)
-        counter.is_active = False
+        counter.revoke_reason = CounterRevokeReason.REMOVED_BY_VENUE
+        counter.revoked_by_member_id = member.id
         counter.token_hash = None
         await self.session.flush()
 
@@ -156,12 +165,14 @@ class CounterService:
         counter.paired_by_member_id = member.id
         counter.paired_at = now
         counter.last_seen_at = now
-        counter.is_active = True
+        counter.status = CounterStatus.ACTIVE
 
         venue = await self.session.get(Venue, counter.venue_id)
         assert venue is not None  # FK
         if venue.status == VenueStatus.SIGNED:
             venue.status = VenueStatus.COUNTER_LIVE  # the first pairing puts the venue live
+            if venue.live_at is None:
+                venue.live_at = now
         await self.session.flush()
         await self.session.refresh(counter)
         await self.session.refresh(venue)
@@ -175,8 +186,7 @@ class CounterService:
                 .join(Venue, Venue.id == CounterDevice.venue_id)
                 .where(
                     CounterDevice.token_hash == hash_token(raw_device_token),
-                    CounterDevice.revoked_at.is_(None),
-                    CounterDevice.is_active.is_(True),
+                    CounterDevice.status == CounterStatus.ACTIVE,
                     Venue.deleted_at.is_(None),
                 )
             )
@@ -209,7 +219,7 @@ class CounterService:
 
     async def _active(self, venue_id, *, for_update: bool = False) -> CounterDevice | None:
         query = select(CounterDevice).where(
-            CounterDevice.venue_id == venue_id, CounterDevice.revoked_at.is_(None)
+            CounterDevice.venue_id == venue_id, CounterDevice.status != CounterStatus.REVOKED
         )
         return await self.session.scalar(query.with_for_update() if for_update else query)
 

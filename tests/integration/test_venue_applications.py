@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.modules.locations.models import City
+from app.modules.locations.models import City, CityStatus
 from app.modules.venue_applications.models import ApplicationStatus, VenueApplication
 from app.modules.venue_applications.service import MAX_APPLICATIONS_PER_IP_PER_DAY
 from app.modules.venues.models import Venue, VenueMember
@@ -20,7 +20,10 @@ pytestmark = pytest.mark.asyncio(loop_scope="session")
 @pytest.fixture
 async def city(db: AsyncSession) -> City:
     row = City(
-        name="Ahmedabad", slug=f"ahd-{uuid.uuid4().hex[:6]}", state="Gujarat", is_active=True
+        name="Ahmedabad",
+        slug=f"ahd-{uuid.uuid4().hex[:6]}",
+        state="Gujarat",
+        status=CityStatus.LIVE,
     )
     db.add(row)
     await db.commit()

@@ -21,7 +21,7 @@ from app.modules.claims.service import (
     photo_media_id,
 )
 from app.modules.leaderboards.service import ALL_TIME, board_key
-from app.modules.scans.models import PointsEntry, ScanSession, Visit
+from app.modules.scans.models import PointsEntry, ScanSession, ScanSource, Visit
 from app.modules.users.models import User
 from app.modules.venues.models import Venue, VenueStatus
 from app.modules.whatsapp.bot import (
@@ -413,6 +413,7 @@ async def test_approve_adds_a_verified_notch(
     assert visit.visited_at == claim.photo_received_at
     scan = await db.get(ScanSession, visit.scan_session_id)
     assert scan is not None and scan.inbound_message_id == claim.photo_message_id
+    assert scan.source == ScanSource.BILL_CLAIM and scan.code_age_s is None
     points = await db.scalars(select(PointsEntry.points).where(PointsEntry.visit_id == visit.id))
     total = sum(points.all())
     assert total == 12  # a visit and a first visit here

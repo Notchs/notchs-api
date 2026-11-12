@@ -44,7 +44,7 @@ from app.modules.claims.exceptions import (
     ClaimPhotoUnavailableException,
     ClaimVenueNotFoundException,
 )
-from app.modules.claims.models import ClaimStatus, VisitClaim
+from app.modules.claims.models import ClaimRejectCode, ClaimStatus, VisitClaim
 from app.modules.claims.repository import ClaimRepository
 from app.modules.claims.schemas import (
     AdminClaimOut,
@@ -54,7 +54,7 @@ from app.modules.claims.schemas import (
     MyClaimOut,
 )
 from app.modules.leaderboards.service import LeaderboardService
-from app.modules.scans.models import ScanSession, ScanStatus, VerificationLevel
+from app.modules.scans.models import ScanSession, ScanSource, ScanStatus, VerificationLevel
 from app.modules.scans.niches import niche_of
 from app.modules.scans.service import ScanService
 from app.modules.users.models import User, UserStatus
@@ -315,6 +315,7 @@ class ClaimService:
             inbound_message_id=claim.photo_message_id,
             status=ScanStatus.VERIFIED,
             resolved_at=now,
+            source=ScanSource.BILL_CLAIM,
         )
         self.session.add(scan_session)
         await self.session.flush()
@@ -353,10 +354,13 @@ class ClaimService:
         reason: str,
         client: WhatsAppClient,
         now: datetime | None = None,
+        *,
+        code: ClaimRejectCode = ClaimRejectCode.OTHER,
     ) -> ClaimDecisionOut:
         now = now or datetime.now(UTC)
         claim = await self._lock_in_review(claim_code)
         claim.status = ClaimStatus.REJECTED
+        claim.reject_code = code
         claim.reject_reason = reason
         claim.reviewed_by_admin_id = admin.id
         claim.reviewed_at = now

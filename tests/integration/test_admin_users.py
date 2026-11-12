@@ -4,9 +4,12 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 
 from app.core.config import settings
-from app.modules.admin_users.models import AdminRole
+from app.modules.admin_users.models import AdminRole, AdminUser
+from app.modules.auth.enums import AccountStatus, RevokeReason
+from app.modules.auth.models import AuthToken
 from tests.integration.test_admin import ADMIN_PASSWORD, make_admin, token_from
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
@@ -42,6 +45,9 @@ async def test_invite_then_they_set_a_password(api: AsyncClient, db, redis, outb
     assert response.status_code == 200, response.text
     added = response.json()["data"]
     assert (added["email"], added["role"], added["has_password"]) == (email, "reviewer", False)
+    assert added["status"] == "invited"
+    row = await db.scalar(select(AdminUser).where(AdminUser.email == email))
+    assert row.invited_by_admin_id is not None and row.password_changed_at is None
     assert again.status_code == 409
     listed = (await api.get("/admin/users", cookies=admin)).json()["data"]
     assert email in [a["email"] for a in listed]
@@ -50,6 +56,8 @@ async def test_invite_then_they_set_a_password(api: AsyncClient, db, redis, outb
         "/admin/auth/set-password", json={"token": token, "password": ADMIN_PASSWORD}
     )
     assert set_password.status_code == 200, set_password.text
+    await db.refresh(row)
+    assert row.status == AccountStatus.ACTIVE and row.password_changed_at is not None
 
 
 async def test_role_change_and_turning_off_logs_them_out(api: AsyncClient, db, redis) -> None:
@@ -66,12 +74,23 @@ async def test_role_change_and_turning_off_logs_them_out(api: AsyncClient, db, r
 
     off = await api.patch(f"/admin/users/{other_code}", json={"is_active": False}, cookies=admin)
     assert off.json()["data"]["is_active"] is False
+    assert off.json()["data"]["status"] == "disabled"
+    turned_off = await db.scalar(select(AdminUser).where(AdminUser.admin_user_code == other_code))
+    await db.refresh(turned_off)
+    assert turned_off.disabled_at is not None and turned_off.disabled_by_admin_id is not None
+    revoked = await db.scalars(
+        select(AuthToken.revoke_reason).where(AuthToken.admin_user_id == turned_off.id)
+    )
+    assert RevokeReason.ACCOUNT_DISABLED in revoked.all()
     assert (await api.get("/admin/me", cookies=other)).status_code in (401, 403)
     link = await api.post(f"/admin/users/{other_code}/link", cookies=admin)
     assert link.status_code == 409  # turn them back on first
 
     on = await api.patch(f"/admin/users/{other_code}", json={"is_active": True}, cookies=admin)
     assert on.json()["data"]["is_active"] is True
+    assert on.json()["data"]["status"] == "active"  # they had set a password
+    await db.refresh(turned_off)
+    assert turned_off.disabled_at is None and turned_off.disabled_by_admin_id is None
     assert (await api.post(f"/admin/users/{other_code}/link", cookies=admin)).status_code == 200
 
 

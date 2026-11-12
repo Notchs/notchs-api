@@ -181,7 +181,7 @@ async def test_only_my_own_counted_notches(api: AsyncClient, db, redis) -> None:
     someone_else = await add_customer(db)
     await ledger_visit(db, someone_else, venue, 12)
     revoked = await ledger_visit(db, user, venue, 12)
-    revoked.status = VisitStatus.REVOKED
+    revoked.status, revoked.revoked_reason = VisitStatus.REVOKED, "Fraud (test)"
     await db.commit()
     cookies = await logged_in(api, db, redis, user)
 

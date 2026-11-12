@@ -19,7 +19,7 @@ from app.modules.leaderboards.service import (
     month_of,
     run_rebuilder,
 )
-from app.modules.locations.models import City
+from app.modules.locations.models import City, CityStatus
 from app.modules.scans.models import PointsEntry, ScanSession, Visit
 from app.modules.users.models import User
 from app.modules.venues.models import Venue
@@ -42,7 +42,7 @@ NOW = datetime(2026, 11, 15, 6, 30, tzinfo=UTC)
 
 async def live_city(db: AsyncSession, venue: Venue) -> City:
     city = await db.get(City, venue.city_id)
-    city.is_active = True
+    city.status = CityStatus.LIVE
     await db.commit()
     return city
 
@@ -66,10 +66,19 @@ async def ledger_visit(
         notch_no=uuid.uuid4().int % 10**8 + 1,
         visit_no_at_venue=1,
         code_slot=1,
+        niche=venue.category,
     )
     db.add(visit)
     await db.flush()
-    db.add(PointsEntry(user_id=user.id, visit_id=visit.id, reason="visit", points=points))
+    db.add(
+        PointsEntry(
+            user_id=user.id,
+            visit_id=visit.id,
+            reason="visit",
+            points=points,
+            city_id=venue.city_id,
+        )
+    )
     await db.commit()
     return visit
 
@@ -237,7 +246,7 @@ async def test_revoked_visits_do_not_count(db, redis) -> None:
     user = await add_customer(db)
     visit = await ledger_visit(db, user, venue, 30)
     await ledger_visit(db, user, venue, 10, NOW + timedelta(days=1))
-    visit.status = "revoked"
+    visit.status, visit.revoked_reason = "revoked", "Fraud (test)"
     await db.commit()
     service = LeaderboardService(redis)
 
@@ -246,7 +255,9 @@ async def test_revoked_visits_do_not_count(db, redis) -> None:
     assert (await service.rank_of(venue.city_id, user.id, Period.ALL, now=NOW)).points == 10
 
 
-@pytest.mark.parametrize("change", [{"status": "blocked"}, {"deleted_at": NOW}])
+@pytest.mark.parametrize(
+    "change", [{"status": "blocked", "blocked_reason": "Fake bills (test)"}, {"deleted_at": NOW}]
+)
 async def test_blocked_and_deleted_customers_leave_the_board(db, redis, change) -> None:
     venue, _ = await add_venue(db)
     user = await add_customer(db)
@@ -266,7 +277,7 @@ async def test_adjustments_count_in_the_home_city(db, redis) -> None:
     user = await add_customer(db)
     user.city_id = venue.city_id
     await ledger_visit(db, user, venue, 30)
-    db.add(PointsEntry(user_id=user.id, reason="adjustment", points=-5))
+    db.add(PointsEntry(user_id=user.id, reason="adjustment", points=-5, note="Correction (test)"))
     await db.commit()
     service = LeaderboardService(redis)
 
@@ -314,6 +325,7 @@ async def test_a_public_customer_who_is_blocked_shows_no_name(api: AsyncClient, 
     city = await live_city(db, venue)
     user = await add_customer(db)
     user.name, user.is_public, user.status = "Riya Mehta", True, "blocked"
+    user.blocked_reason = "Fake bills (test)"
     await db.commit()
     await LeaderboardService(redis).add_points(city.id, user.id, 30, ist_date(datetime.now(UTC)))
 

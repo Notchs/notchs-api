@@ -9,7 +9,7 @@ from app.modules.admin_users.models import AdminUser
 from app.modules.auth import messages
 from app.modules.auth.enums import SubjectType
 from app.modules.auth.password_auth import AccountKind, PasswordAuthService, PasswordLogin
-from app.modules.auth.sessions import Subject, active_admin
+from app.modules.auth.sessions import Subject, active_admin, enabled_admin
 
 
 def admin_subject(admin: AdminUser) -> Subject:
@@ -21,6 +21,7 @@ ADMINS = AccountKind(
     subject_type=SubjectType.ADMIN,
     model=AdminUser,
     load_active=active_admin,
+    load_enabled=enabled_admin,
     subject_of=admin_subject,
     subject_id_of=lambda token: token.admin_user_id,
     reset_email=lambda admin, raw: messages.password_reset_email(

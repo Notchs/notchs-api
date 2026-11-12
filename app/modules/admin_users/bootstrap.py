@@ -18,6 +18,8 @@ settings. Whoever can change these settings can already reach the database, so t
 nobody new power. More admins are added in admin Settings.
 """
 
+from datetime import UTC, datetime
+
 from redis.asyncio import Redis
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +28,9 @@ from app.clients.email import EmailClient, EmailSendError
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.modules.admin_users.models import AdminRole, AdminUser
+from app.modules.admin_users.roles import built_in_role
 from app.modules.auth.admin_auth import AdminAuthService
+from app.modules.auth.enums import AccountStatus
 from app.modules.auth.exceptions import PasswordInvalidException
 from app.modules.auth.passwords import check_password_policy, hash_password_async
 
@@ -61,7 +65,7 @@ async def ensure_first_admin(
     admin = await session.scalar(select(AdminUser).where(AdminUser.email == email))
 
     if admin is not None:
-        if admin.password_hash is not None or not admin.is_active:
+        if admin.password_hash is not None or admin.status == AccountStatus.DISABLED:
             await session.rollback()
             return False
         password_hash = await _password_hash(email)
@@ -69,6 +73,8 @@ async def ensure_first_admin(
             await session.rollback()
             return False
         admin.password_hash = password_hash
+        admin.password_changed_at = datetime.now(UTC)
+        admin.status = AccountStatus.ACTIVE
         await session.commit()
         logger.info("Admin %s got its first password from settings", admin.admin_user_code)
         return True
@@ -77,8 +83,11 @@ async def ensure_first_admin(
     admin = AdminUser(
         email=email,
         name=settings.FIRST_ADMIN_NAME.strip()[:60] or "Notchs admin",
-        role=AdminRole.ADMIN,
+        role=await built_in_role(session, AdminRole.ADMIN),
         password_hash=password_hash,
+        # With a password it can log in at once; without one it waits for the emailed link.
+        status=AccountStatus.ACTIVE if password_hash else AccountStatus.INVITED,
+        password_changed_at=datetime.now(UTC) if password_hash else None,
     )
     session.add(admin)
     await session.flush()

@@ -26,7 +26,11 @@ from app.modules.venue_applications.exceptions import (
     ApplicationInvalidStateException,
     ApplicationNotFoundException,
 )
-from app.modules.venue_applications.models import ApplicationStatus, VenueApplication
+from app.modules.venue_applications.models import (
+    OPEN_STATUSES,
+    ApplicationStatus,
+    VenueApplication,
+)
 from app.modules.venue_applications.schemas import ApproveIn, RejectIn
 from app.modules.venues.models import Venue, VenueMember, VenueMemberRole, VenueStatus
 from app.modules.venues.repository import VenueRepository
@@ -144,7 +148,7 @@ class ApplicationReviewService:
 
     async def _pending(self, ref: str) -> VenueApplication:
         application = await self.get(ref, for_update=True)
-        if application.status != ApplicationStatus.PENDING:
+        if application.status not in OPEN_STATUSES:
             raise ApplicationInvalidStateException()
         return application
 
