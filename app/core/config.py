@@ -115,11 +115,13 @@ class Settings(BaseSettings):
     # test number). Counter phones put it in their scan QR.
     WHATSAPP_PUBLIC_NUMBER: str | None = None
 
-    # The very first admin, for a deploy with no shell to run `create-admin` (admin_users/
-    # bootstrap.py): at startup, only while no admin exists, this address becomes an admin and
-    # gets an emailed set-password link. Ignored once any admin exists.
+    # An admin made from settings, for a deploy with no shell to run `create-admin`
+    # (admin_users/bootstrap.py). At startup, if no admin has this email, one is created.
+    # With FIRST_ADMIN_PASSWORD it can log in straight away (no email needed); without it, it is
+    # emailed a set-password link. An account that already has a password is never touched.
     FIRST_ADMIN_EMAIL: str | None = None
     FIRST_ADMIN_NAME: str = "Notchs admin"
+    FIRST_ADMIN_PASSWORD: SecretStr | None = None
     # Public https image sent with a stamp. Empty = the stamp is a text message.
     WHATSAPP_STAMP_IMAGE_URL: str | None = None
     # How often the API looks for incoming messages left unhandled (e.g. after a restart).

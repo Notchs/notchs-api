@@ -307,11 +307,19 @@ docker compose exec api python -m app.cli admin-link --email you@notchs.com   # 
 They use the database and schema in `.env`. `create-admin` prints the set-password link (and emails
 it unless `EMAIL_DRY_RUN=true`); `--role reviewer` makes a view-only admin.
 
-**The first admin without a shell** (e.g. Render's free plan): set `FIRST_ADMIN_EMAIL` (and
-`FIRST_ADMIN_NAME`) on the API and redeploy. At startup, only while no admin exists at all, that
-address becomes an admin and is emailed a set-password link (`app/modules/admin_users/bootstrap.py`).
-Once any admin exists it does nothing; add more admins in admin Settings. If the email doesn't
-arrive, use "Forgot password" on the admin login page.
+**An admin without a shell** (e.g. Render's free plan): set `FIRST_ADMIN_EMAIL`,
+`FIRST_ADMIN_NAME` and `FIRST_ADMIN_PASSWORD` (10+ characters) on the API and redeploy
+(`app/modules/admin_users/bootstrap.py`). If no admin has that email, one is created and can log
+in straight away; no email needs to arrive. Without the password it is emailed a set-password
+link instead. An admin who never set a password gets this one; an account that already has a
+password is never touched. After logging in, change the password and remove
+`FIRST_ADMIN_PASSWORD`.
+
+**Is email really being sent?** Admin → Settings → System shows whether email, WhatsApp and the
+bot check are switched on (`GET /admin/system`: states only, never keys), and "Send test email"
+(`POST /admin/system/test-email`) sends one to your own address now and shows the provider's
+reason if it is refused. With `EMAIL_DRY_RUN=true` (the default outside production) emails are
+only written to the server log.
 
 ## WhatsApp webhook
 
