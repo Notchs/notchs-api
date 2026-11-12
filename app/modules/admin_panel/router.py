@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
 
+from app.clients.email import EmailClient, get_email_client
 from app.common.dependencies import DBSession, Pagination, RedisClient
 from app.common.schemas import CustomResponse, PaginatedResponse
 from app.modules.admin_panel.schemas import (
@@ -18,6 +19,12 @@ from app.modules.admin_panel.schemas import (
     VenueStatusIn,
 )
 from app.modules.admin_panel.service import AdminPanelService
+from app.modules.admin_panel.system import (
+    SystemStatusOut,
+    TestEmailOut,
+    send_test_email,
+    system_status,
+)
 from app.modules.auth.dependencies import CurrentAdmin, CurrentFullAdmin
 from app.modules.scans.models import VisitStatus
 from app.modules.users.models import UserStatus
@@ -146,3 +153,31 @@ async def delete_customer_account(
 ) -> CustomResponse[None]:
     await panel.delete_customer(admin, handle, body.confirm)
     return CustomResponse(message="Deleted. Their visits stay, anonymous.")
+
+
+@router.get(
+    "/system",
+    response_model=CustomResponse[SystemStatusOut],
+    summary="Whether email, WhatsApp and the bot check are really switched on (no secrets)",
+)
+async def system(_: CurrentAdmin) -> CustomResponse[SystemStatusOut]:
+    return CustomResponse(message="OK", data=system_status())
+
+
+@router.post(
+    "/system/test-email",
+    response_model=CustomResponse[TestEmailOut],
+    summary="Send a test email to my own address now; a failure says why",
+)
+async def test_email(
+    admin: CurrentFullAdmin,
+    redis: RedisClient,
+    email_client: Annotated[EmailClient, Depends(get_email_client)],
+) -> CustomResponse[TestEmailOut]:
+    result = await send_test_email(admin, redis, email_client)
+    message = (
+        "Emails are in dry-run mode: this one was only written to the server log."
+        if result.mode == "dry_run"
+        else f"Sent to {result.sent_to}. Check your inbox (and spam)."
+    )
+    return CustomResponse(message=message, data=result)
