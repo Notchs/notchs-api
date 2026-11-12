@@ -196,6 +196,10 @@ def is_login(message: WhatsAppMessage) -> bool:
     return _LOGIN_MESSAGE.fullmatch(words) is not None
 
 
+# Tries at a free handle when many people with the same name join in the same instant.
+HANDLE_ATTEMPTS = 6
+
+
 async def find_or_create_customer(
     session: AsyncSession, phone_e164: str, profile_name: str | None = None
 ) -> User:
@@ -204,16 +208,23 @@ async def find_or_create_customer(
     customer (the phone number is unique). A customer without a name gets one from a later
     message; a name already set (perhaps changed on the website) is never overwritten."""
     name = clean_name(profile_name)
-    await session.execute(
-        insert(User)
-        .values(
-            phone_e164=phone_e164,
-            name=name,
-            handle=await free_handle(name, taken=UserRepository(session).handle_exists),
+    handles = UserRepository(session)
+    user = None
+    for _ in range(HANDLE_ATTEMPTS):
+        # Any conflict is skipped: the phone number (they exist already), or the handle, when
+        # another new customer took the same one a moment ago. Then a new handle is tried.
+        await session.execute(
+            insert(User)
+            .values(
+                phone_e164=phone_e164,
+                name=name,
+                handle=await free_handle(name, taken=handles.handle_exists),
+            )
+            .on_conflict_do_nothing()
         )
-        .on_conflict_do_nothing(index_elements=[User.phone_e164])
-    )
-    user = await session.scalar(select(User).where(User.phone_e164 == phone_e164))
+        user = await session.scalar(select(User).where(User.phone_e164 == phone_e164))
+        if user is not None:
+            break
     assert user is not None
     if user.name is None and name is not None:
         user.name = name

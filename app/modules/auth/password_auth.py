@@ -44,6 +44,8 @@ logger = get_logger(__name__)
 
 MAX_LOGIN_FAILURES = 5
 LOGIN_WINDOW_SECONDS = 15 * 60
+# Wrong passwords for one account from anywhere: stops guessing from many (or made-up) IPs.
+MAX_LOGIN_FAILURES_PER_ACCOUNT = 20
 MAX_RESETS_PER_EMAIL_PER_HOUR = 3
 MAX_RESETS_PER_IP_PER_HOUR = 10
 HOUR = 60 * 60
@@ -95,7 +97,12 @@ class PasswordAuthService[AccountT: PasswordAccount]:
         """The same error for an unknown email, a wrong password and too many attempts."""
         email = normalize_email(email)
         failures_key = f"rl:login:{self.kind.key}:{email}:{ip or 'unknown'}"
-        if await rate_limit.is_limited(self.redis, failures_key, limit=MAX_LOGIN_FAILURES):
+        account_key = f"rl:login:{self.kind.key}:{email}:any"
+        if await rate_limit.is_limited(
+            self.redis, failures_key, limit=MAX_LOGIN_FAILURES
+        ) or await rate_limit.is_limited(
+            self.redis, account_key, limit=MAX_LOGIN_FAILURES_PER_ACCOUNT
+        ):
             await verify_dummy_async(password)
             raise InvalidCredentialsException()
 
@@ -103,9 +110,11 @@ class PasswordAuthService[AccountT: PasswordAccount]:
         if account is None or account.password_hash is None:
             await verify_dummy_async(password)  # same time as a real check
             await self._count_failure(failures_key)
+            await self._count_account_failure(account_key)
             raise InvalidCredentialsException()
         if not await verify_password_async(account.password_hash, password):
             await self._count_failure(failures_key)
+            await self._count_account_failure(account_key)
             raise InvalidCredentialsException()
 
         # Only someone who knows the password learns that the account is switched off.
@@ -219,6 +228,14 @@ class PasswordAuthService[AccountT: PasswordAccount]:
             self.kind.subject_of(account), ip=ip, user_agent=user_agent
         )
         return PasswordLogin(account=account, session=issued)
+
+    async def _count_account_failure(self, key: str) -> None:
+        await rate_limit.hit(
+            self.redis,
+            key,
+            limit=MAX_LOGIN_FAILURES_PER_ACCOUNT,
+            window_seconds=LOGIN_WINDOW_SECONDS,
+        )
 
     async def _count_failure(self, key: str) -> None:
         await rate_limit.hit(
