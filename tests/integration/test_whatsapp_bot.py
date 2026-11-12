@@ -364,3 +364,24 @@ async def test_login_from_a_new_number_asks_for_consent_through_the_webhook(
     (reply,) = await replies(db, sender)
     assert reply.body == consent_text()
     assert meta.buttons() == [(CONSENT_BUTTON.id, CONSENT_BUTTON.title)]
+
+
+async def test_a_handle_taken_at_the_same_instant_gets_another(
+    db: AsyncSession, monkeypatch
+) -> None:
+    """Two people with the same name join together: the second insert meets the first's handle."""
+    from app.modules.whatsapp import bot as bot_module
+
+    existing = await bot_module.find_or_create_customer(db, phone(), "Riya M")
+    await db.commit()
+    handles = iter([existing.handle, existing.handle, "riya.m999999"])
+
+    async def racing_handle(name, *, taken):
+        return next(handles)
+
+    monkeypatch.setattr(bot_module, "free_handle", racing_handle)
+
+    newcomer = await bot_module.find_or_create_customer(db, phone(), "Riya M")
+
+    assert newcomer.id != existing.id
+    assert newcomer.handle == "riya.m999999"

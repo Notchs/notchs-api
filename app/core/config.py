@@ -114,6 +114,21 @@ class Settings(BaseSettings):
     # The number customers message, digits only with the country code (e.g. 15556755530 for the
     # test number). Counter phones put it in their scan QR.
     WHATSAPP_PUBLIC_NUMBER: str | None = None
+
+    # The most requests one visitor (IP address) may make in a minute, over the whole API: a
+    # backstop behind the per-feature limits. 0 turns it off. Health checks and Meta's webhook
+    # are not counted.
+    GLOBAL_RATE_LIMIT_PER_MINUTE: int = 600
+    # The largest request body the API reads (the WhatsApp webhook has its own limit).
+    MAX_REQUEST_BODY_BYTES: int = 1_000_000
+
+    # An admin made from settings, for a deploy with no shell to run `create-admin`
+    # (admin_users/bootstrap.py). At startup, if no admin has this email, one is created.
+    # With FIRST_ADMIN_PASSWORD it can log in straight away (no email needed); without it, it is
+    # emailed a set-password link. An account that already has a password is never touched.
+    FIRST_ADMIN_EMAIL: str | None = None
+    FIRST_ADMIN_NAME: str = "Notchs admin"
+    FIRST_ADMIN_PASSWORD: SecretStr | None = None
     # Public https image sent with a stamp. Empty = the stamp is a text message.
     WHATSAPP_STAMP_IMAGE_URL: str | None = None
     # How often the API looks for incoming messages left unhandled (e.g. after a restart).
@@ -219,6 +234,16 @@ class Settings(BaseSettings):
         if self.WHATSAPP_SWEEP_INTERVAL_SECONDS < 0:
             raise ValueError("WHATSAPP_SWEEP_INTERVAL_SECONDS must be 0 (off) or more")
         return self
+
+    @field_validator("FIRST_ADMIN_EMAIL")
+    @classmethod
+    def _first_admin_email(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        email = value.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise ValueError("FIRST_ADMIN_EMAIL must be an email address")
+        return email
 
     @field_validator("TOTP_ENCRYPTION_KEY")
     @classmethod
