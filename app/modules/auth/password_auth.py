@@ -20,7 +20,7 @@ from app.clients.email import EmailMessage
 from app.core import rate_limit
 from app.core.logging import get_logger
 from app.modules.auth.emails import normalize_email
-from app.modules.auth.enums import SubjectType, TokenType
+from app.modules.auth.enums import AccountStatus, RevokeReason, SubjectType, TokenType
 from app.modules.auth.exceptions import (
     AccountInactiveException,
     AuthRateLimitedException,
@@ -56,7 +56,9 @@ class PasswordAccount(Protocol):
     email: str
     name: str
     password_hash: str | None
+    password_changed_at: datetime | None
     last_login_at: datetime | None
+    status: str  # AccountStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +67,8 @@ class AccountKind[AccountT: PasswordAccount]:
     subject_type: SubjectType
     model: type[AccountT]
     load_active: Callable[[AsyncSession, uuid.UUID], Awaitable[AccountT | None]]
+    # Active or still invited: who may use a set-password or reset link.
+    load_enabled: Callable[[AsyncSession, uuid.UUID], Awaitable[AccountT | None]]
     subject_of: Callable[[AccountT], Subject]
     subject_id_of: Callable[[AuthToken], uuid.UUID | None]
     reset_email: Callable[[AccountT, str], EmailMessage]
@@ -122,13 +126,15 @@ class PasswordAuthService[AccountT: PasswordAccount]:
             raw_token, (TokenType.SET_PASSWORD, TokenType.PASSWORD_RESET), self.kind.subject_type
         )
         account_id = self.kind.subject_id_of(token)
-        account = await self.kind.load_active(self.session, account_id) if account_id else None
+        account = await self.kind.load_enabled(self.session, account_id) if account_id else None
         if account is None:
             raise TokenInvalidException()
 
         check_password_policy(password, email=account.email)
-        account.password_hash = await hash_password_async(password)
-        await self.sessions.end_all(self.kind.subject_of(account))
+        await self._new_password(account, password)
+        if account.status == AccountStatus.INVITED:
+            account.status = AccountStatus.ACTIVE
+        await self.sessions.end_all(self.kind.subject_of(account), RevokeReason.PASSWORD_CHANGED)
         return await self._log_in(account, ip=ip, user_agent=user_agent)
 
     async def forgot_password(self, email: str, *, ip: str | None) -> EmailMessage | None:
@@ -151,7 +157,7 @@ class PasswordAuthService[AccountT: PasswordAccount]:
             raise AuthRateLimitedException()
 
         account = await self._by_email(email)
-        if account is None or await self.kind.load_active(self.session, account.id) is None:
+        if account is None or await self.kind.load_enabled(self.session, account.id) is None:
             logger.info("Password reset asked for an unknown or inactive %s email", self.kind.key)
             return None
         raw = await self.tokens.issue(
@@ -188,8 +194,8 @@ class PasswordAuthService[AccountT: PasswordAccount]:
         check_password_policy(new_password, email=account.email)
         if current_password == new_password:
             raise PasswordInvalidException("Choose a password different from the current one.")
-        account.password_hash = await hash_password_async(new_password)
-        await self.sessions.end_all(self.kind.subject_of(account))
+        await self._new_password(account, new_password)
+        await self.sessions.end_all(self.kind.subject_of(account), RevokeReason.PASSWORD_CHANGED)
         login = await self._log_in(account, ip=ip, user_agent=user_agent)
         return login, self.kind.changed_email(account)
 
@@ -200,6 +206,10 @@ class PasswordAuthService[AccountT: PasswordAccount]:
     async def _by_email(self, email: str) -> AccountT | None:
         model: Any = self.kind.model
         return await self.session.scalar(select(model).where(model.email == email))
+
+    async def _new_password(self, account: AccountT, password: str) -> None:
+        account.password_hash = await hash_password_async(password)
+        account.password_changed_at = datetime.now(UTC)
 
     async def _log_in(
         self, account: AccountT, *, ip: str | None, user_agent: str | None

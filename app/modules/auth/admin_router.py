@@ -43,7 +43,7 @@ def _me(admin: AdminUser, login: PasswordLogin[AdminUser] | None = None) -> Admi
         admin_user_code=admin.admin_user_code,
         name=admin.name,
         email=admin.email,
-        role=admin.role,
+        role=admin.access,
         session=SessionOut(access_expires_at=login.session.access_expires_at) if login else None,
     )
 

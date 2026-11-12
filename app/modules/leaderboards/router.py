@@ -26,7 +26,7 @@ from app.modules.leaderboards.schemas import (
     VisibilityIn,
 )
 from app.modules.leaderboards.service import LeaderboardService, Period, last_notch_on
-from app.modules.locations.models import City
+from app.modules.locations.models import City, CityStatus
 
 router = APIRouter(prefix="/leaderboards", tags=["Leaderboards"])
 
@@ -53,7 +53,9 @@ async def leaderboard(
         redis, f"rl:leaderboard:{ip}", limit=MAX_REQUESTS_PER_MINUTE, window_seconds=60
     ):
         raise LeaderboardRateLimitedException()
-    live = await session.scalar(select(City.id).where(City.id == city_id, City.is_active.is_(True)))
+    live = await session.scalar(
+        select(City.id).where(City.id == city_id, City.status == CityStatus.LIVE)
+    )
     if live is None:
         raise LeaderboardCityNotFoundException()
     rows, total = await LeaderboardService(redis).top(session, city_id, period, limit)

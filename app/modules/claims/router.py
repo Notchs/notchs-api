@@ -138,5 +138,5 @@ async def reject(
     claims: ClaimDep,
     client: WhatsAppClientDep,
 ) -> CustomResponse[ClaimDecisionOut]:
-    decision = await claims.reject(claim_code, admin, body.reason, client)
+    decision = await claims.reject(claim_code, admin, body.reason, client, code=body.code)
     return CustomResponse(message="Rejected.", data=decision)

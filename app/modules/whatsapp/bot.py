@@ -50,6 +50,8 @@ from app.modules.auth.exceptions import AuthRateLimitedException, TokenInvalidEx
 from app.modules.auth.tokens import lifetime
 from app.modules.claims import service as claims
 from app.modules.claims.service import ClaimService, PhotoOutcome, PromptOutcome
+from app.modules.consents.models import ConsentChannel, ConsentPurpose
+from app.modules.consents.service import record_user_consent
 from app.modules.leaderboards.service import LeaderboardService, Period
 from app.modules.locations.models import City
 from app.modules.scans import replies
@@ -461,11 +463,20 @@ class WhatsAppBot:
         await sender.send_text(user.phone_e164, replies.no_code_text(link), user_id=user.id)
 
     async def _consent(self, session: AsyncSession, sender: WhatsAppSender, user: User) -> None:
-        recorded = await UserRepository(session).record_consent(
-            user.id, CONSENT_VERSION, datetime.now(UTC)
-        )
+        now = datetime.now(UTC)
+        recorded = await UserRepository(session).record_consent(user.id, CONSENT_VERSION, now)
         if not recorded:  # a second tap: already answered
             return
+        # The exact words they agreed to, kept with the version (DPDP).
+        await record_user_consent(
+            session,
+            user.id,
+            purpose=ConsentPurpose.PRIVACY_NOTICE,
+            version=CONSENT_VERSION,
+            wording=consent_text(),
+            channel=ConsentChannel.WHATSAPP,
+            accepted_at=now,
+        )
         await session.refresh(user)
         link = await self._link_if_possible(session, user)
         text = f"{CONSENT_THANKS} {replies.no_code_text(link)}"

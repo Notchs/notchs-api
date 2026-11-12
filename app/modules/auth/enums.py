@@ -24,3 +24,23 @@ class OtpPurpose(StrEnum):
 
     APPLICATION = "application"
     EMAIL_CHANGE = "email_change"
+
+
+class AccountStatus(StrEnum):
+    """State of a password login (`admin_users.status`, `venue_members.status`)."""
+
+    INVITED = "invited"  # added, the emailed set-password link not used yet
+    ACTIVE = "active"
+    DISABLED = "disabled"
+
+
+class RevokeReason(StrEnum):
+    """Why a stored token was cancelled (`auth_tokens.revoke_reason`, set with `revoked_at`).
+    A refresh that rotates a token marks it used, not revoked."""
+
+    LOGOUT = "logout"
+    SUPERSEDED = "superseded"  # a newer link of the same kind was sent
+    REUSE_DETECTED = "reuse_detected"  # a rotated refresh token came back: stolen cookie
+    PASSWORD_CHANGED = "password_changed"
+    ACCOUNT_DISABLED = "account_disabled"  # turned off, blocked or deleted
+    ADMIN = "admin"  # removed by the team

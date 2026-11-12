@@ -9,13 +9,28 @@ from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Numeric, St
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Entity, in_values, public_code_column
-from app.modules.venues.models import VenueCategory
+from app.modules.users.models import INSTAGRAM_REGEX
+from app.modules.venues.models import PINCODE_REGEX, VenueCategory
 
 
 class ApplicationStatus(StrEnum):
     PENDING = "pending"
+    NEEDS_INFO = "needs_info"  # the team asked for more details (needs_info_message)
     APPROVED = "approved"
     REJECTED = "rejected"
+    WITHDRAWN = "withdrawn"  # the applicant cancelled it
+
+
+# Still waiting for a decision: one per email, and the email can't apply again meanwhile.
+OPEN_STATUSES = (ApplicationStatus.PENDING, ApplicationStatus.NEEDS_INFO)
+
+
+class HeardFrom(StrEnum):
+    INSTAGRAM = "instagram"
+    FRIEND = "friend"
+    NOTCHS_TEAM = "notchs_team"
+    CUSTOMER = "customer"
+    OTHER = "other"
 
 
 class VenueApplication(Entity):
@@ -27,12 +42,15 @@ class VenueApplication(Entity):
         CheckConstraint("latitude BETWEEN -90 AND 90", name="latitude_range"),
         CheckConstraint("longitude BETWEEN -180 AND 180", name="longitude_range"),
         CheckConstraint("(latitude IS NULL) = (longitude IS NULL)", name="coordinates_paired"),
-        # One open application per email. Rejected applicants may apply again.
+        CheckConstraint(in_values("heard_from", HeardFrom), name="heard_from_valid"),
+        CheckConstraint(f"pincode ~ '{PINCODE_REGEX}'", name="pincode_format"),
+        CheckConstraint(f"instagram_handle ~ '{INSTAGRAM_REGEX}'", name="instagram_handle_format"),
+        # One open application per email. Rejected or withdrawn applicants may apply again.
         Index(
-            "uq_venue_applications_pending_email",
+            "uq_venue_applications_open_email",
             "email",
             unique=True,
-            postgresql_where=text("status = 'pending'"),
+            postgresql_where=text("status IN ('pending', 'needs_info')"),
         ),
         # The admin queue: pending first, oldest first.
         Index("ix_venue_applications_status_created_at", "status", "created_at"),
@@ -70,3 +88,14 @@ class VenueApplication(Entity):
     rejection_reason: Mapped[str | None] = mapped_column(String(255))
     # The venue created on approval.
     venue_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("venues.id", ondelete="SET NULL"))
+    # The area picked from the city's dropdown (checked to be in `city_id` by the service), or
+    # what they typed when it isn't listed.
+    area_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("areas.id", ondelete="SET NULL"))
+    area_suggestion: Mapped[str | None] = mapped_column(String(120))
+    pincode: Mapped[str | None] = mapped_column(String(6))
+    instagram_handle: Mapped[str | None] = mapped_column(String(30))
+    heard_from: Mapped[str | None] = mapped_column(String(12))
+    # For the team only: never returned by public endpoints or shown to the applicant.
+    admin_notes: Mapped[str | None] = mapped_column(Text)
+    # What the team asked for when setting `needs_info`.
+    needs_info_message: Mapped[str | None] = mapped_column(String(255))

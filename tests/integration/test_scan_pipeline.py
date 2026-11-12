@@ -15,6 +15,7 @@ from app.modules.scans.models import (
     PointsEntry,
     RejectReason,
     ScanSession,
+    ScanSource,
     ScanStatus,
     Visit,
     VisitStatus,
@@ -28,7 +29,7 @@ from app.modules.scans.service import (
 )
 from app.modules.users.models import User, UserStatus
 from app.modules.venues.counters import new_totp_secret
-from app.modules.venues.models import CounterDevice, Venue, VenueStatus
+from app.modules.venues.models import CounterDevice, CounterStatus, Venue, VenueStatus
 from app.modules.whatsapp.bot import find_or_create_customer
 from app.modules.whatsapp.models import WhatsAppMessage
 
@@ -76,6 +77,7 @@ async def add_venue(session: AsyncSession, **fields) -> tuple[Venue, str]:
             totp_secret_enc=crypto.encrypt(secret),
             token_hash=uuid.uuid4().hex,
             paired_at=NOW,
+            status=CounterStatus.ACTIVE,
         )
     )
     await session.flush()
@@ -148,6 +150,12 @@ async def test_a_good_scan_counts_a_visit_with_points(db, redis, customer, live)
     assert visit.scan_session_id == result.scan_session.id
     assert result.scan_session.counter_device_id is not None
     assert await points_of(db, customer) == 12
+    # Fixed on the rows at the time: the niche, the city the points count for, the code's age.
+    assert visit.niche == venue.category
+    cities = await db.scalars(select(PointsEntry.city_id).where(PointsEntry.visit_id == visit.id))
+    assert set(cities.all()) == {venue.city_id}
+    assert result.scan_session.source == ScanSource.CODE
+    assert 0 <= result.scan_session.code_age_s < INTERVAL
 
 
 async def test_first_scan_sets_home_city_and_last_seen(db, redis, customer, live) -> None:
@@ -220,7 +228,7 @@ async def assert_rejected(db, result: ScanResult, reason: RejectReason) -> None:
 
 async def test_blocked_customer(db, redis, customer, live) -> None:
     venue, secret = live
-    customer.status = UserStatus.BLOCKED
+    customer.status, customer.blocked_reason = UserStatus.BLOCKED, "Fake bills (test)"
 
     result = await send(db, redis, customer, venue, live_code(secret))
 
@@ -271,9 +279,9 @@ async def test_deleted_venue(db, redis, customer, live) -> None:
 @pytest.mark.parametrize(
     "change",
     [
-        {"revoked_at": NOW, "is_active": False, "token_hash": None},
-        {"token_hash": None},  # made, but the phone never paired
-        {"is_active": False},
+        {"status": CounterStatus.REVOKED, "revoked_at": NOW, "token_hash": None},
+        # made, but the phone never paired
+        {"status": CounterStatus.PENDING_PAIRING, "token_hash": None},
     ],
 )
 async def test_venue_without_a_working_counter(db, redis, customer, live, change) -> None:
@@ -332,7 +340,8 @@ async def test_too_many_wrong_codes_lock_out_even_the_right_one(db, redis, custo
 
     result = await send(db, redis, customer, venue, live_code(secret))
 
-    await assert_rejected(db, result, RejectReason.WRONG_CODE)
+    # Stored as guessing, so the team can tell it from typos; the reply reads the same.
+    await assert_rejected(db, result, RejectReason.TOO_MANY_ATTEMPTS)
 
 
 async def test_expired_codes_use_no_guesses(db, redis, customer, live) -> None:
@@ -417,7 +426,7 @@ async def test_other_niches_count_the_same_day(db, redis, customer) -> None:
 async def test_a_revoked_notch_frees_the_niche(db, redis, customer) -> None:
     cafe, secret = await add_venue(db)
     first = await send(db, redis, customer, cafe, live_code(secret))
-    first.visit.status = VisitStatus.REVOKED
+    first.visit.status, first.visit.revoked_reason = VisitStatus.REVOKED, "Fraud (test)"
     await db.flush()
     other_cafe, other_secret = await add_venue(db)
 

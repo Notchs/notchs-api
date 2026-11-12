@@ -16,7 +16,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.modules.admin_users.models import AdminUser
 from app.modules.auth.access_tokens import create_access_token
-from app.modules.auth.enums import SubjectType, TokenType
+from app.modules.auth.enums import AccountStatus, RevokeReason, SubjectType, TokenType
 from app.modules.auth.exceptions import NotAuthenticatedException
 from app.modules.auth.models import AuthToken
 from app.modules.auth.tokens import hash_token, lifetime, new_token
@@ -68,7 +68,20 @@ async def active_venue_member(session: AsyncSession, member_id: uuid.UUID) -> Ve
         .join(Venue, Venue.id == VenueMember.venue_id)
         .where(
             VenueMember.id == member_id,
-            VenueMember.is_active.is_(True),
+            VenueMember.status == AccountStatus.ACTIVE,
+            Venue.deleted_at.is_(None),
+        )
+    )
+
+
+async def enabled_venue_member(session: AsyncSession, member_id: uuid.UUID) -> VenueMember | None:
+    """Active or still invited (for the set-password and forgot-password links)."""
+    return await session.scalar(
+        select(VenueMember)
+        .join(Venue, Venue.id == VenueMember.venue_id)
+        .where(
+            VenueMember.id == member_id,
+            VenueMember.status != AccountStatus.DISABLED,
             Venue.deleted_at.is_(None),
         )
     )
@@ -76,7 +89,16 @@ async def active_venue_member(session: AsyncSession, member_id: uuid.UUID) -> Ve
 
 async def active_admin(session: AsyncSession, admin_id: uuid.UUID) -> AdminUser | None:
     return await session.scalar(
-        select(AdminUser).where(AdminUser.id == admin_id, AdminUser.is_active.is_(True))
+        select(AdminUser).where(AdminUser.id == admin_id, AdminUser.status == AccountStatus.ACTIVE)
+    )
+
+
+async def enabled_admin(session: AsyncSession, admin_id: uuid.UUID) -> AdminUser | None:
+    """Active or still invited (for the set-password and forgot-password links)."""
+    return await session.scalar(
+        select(AdminUser).where(
+            AdminUser.id == admin_id, AdminUser.status != AccountStatus.DISABLED
+        )
     )
 
 
@@ -118,7 +140,7 @@ class SessionService:
                     token.family_id,
                     token.subject_type,
                 )
-                await self._revoke_family(token.family_id, now)
+                await self._revoke_family(token.family_id, now, RevokeReason.REUSE_DETECTED)
                 # Keep the revocation even though this request fails.
                 await self.session.commit()
             raise NotAuthenticatedException()
@@ -128,7 +150,7 @@ class SessionService:
 
         subject = await self._active_subject(token)
         if subject is None:
-            await self._revoke_family(token.family_id, now)
+            await self._revoke_family(token.family_id, now, RevokeReason.ACCOUNT_DISABLED)
             await self.session.commit()
             raise NotAuthenticatedException()
 
@@ -145,9 +167,11 @@ class SessionService:
             )
         )
         if token is not None:
-            await self._revoke_family(token.family_id, datetime.now(UTC))
+            await self._revoke_family(token.family_id, datetime.now(UTC), RevokeReason.LOGOUT)
 
-    async def end_all(self, subject: Subject, *, keep_family: uuid.UUID | None = None) -> int:
+    async def end_all(
+        self, subject: Subject, reason: RevokeReason, *, keep_family: uuid.UUID | None = None
+    ) -> int:
         """Revoke every session of `subject`, except `keep_family` (the one in use, if given).
 
         Used by password change (keep the current session) and reset or deactivation (keep none).
@@ -159,7 +183,9 @@ class SessionService:
         )
         if keep_family is not None:
             query = query.where(AuthToken.family_id != keep_family)
-        result = await self.session.execute(query.values(revoked_at=datetime.now(UTC)))
+        result = await self.session.execute(
+            query.values(revoked_at=datetime.now(UTC), revoke_reason=reason)
+        )
         return result.rowcount or 0
 
     async def _issue(
@@ -213,11 +239,13 @@ class SessionService:
                 return Subject(SubjectType.ADMIN, admin.id) if admin else None
         return None
 
-    async def _revoke_family(self, family_id: uuid.UUID | None, now: datetime) -> None:
+    async def _revoke_family(
+        self, family_id: uuid.UUID | None, now: datetime, reason: RevokeReason
+    ) -> None:
         if family_id is None:
             return
         await self.session.execute(
             update(AuthToken)
             .where(AuthToken.family_id == family_id, AuthToken.revoked_at.is_(None))
-            .values(revoked_at=now)
+            .values(revoked_at=now, revoke_reason=reason)
         )

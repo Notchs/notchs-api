@@ -17,8 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.db.seed import CITIES, seed
 from app.modules.admin_users.models import AdminRole, AdminUser
+from app.modules.admin_users.roles import built_in_role
 from app.modules.auth.admin_auth import AdminAuthService
-from app.modules.locations.models import Area, City
+from app.modules.locations.models import Area, City, CityStatus
 from app.modules.venue_applications.models import ApplicationStatus, VenueApplication
 from app.modules.venues.models import Venue, VenueMember, VenueStatus
 
@@ -44,7 +45,11 @@ async def make_admin(
     db: AsyncSession, redis, api: AsyncClient, role: AdminRole = AdminRole.ADMIN
 ) -> dict[str, str]:
     """An admin with a password, logged in. Returns the admin access cookie."""
-    admin = AdminUser(name="Abhishek", email=f"a-{uuid.uuid4().hex[:6]}@notchs.com", role=role)
+    admin = AdminUser(
+        name="Abhishek",
+        email=f"a-{uuid.uuid4().hex[:6]}@notchs.com",
+        role=await built_in_role(db, role),
+    )
     db.add(admin)
     await db.flush()
     invite = await AdminAuthService(db, redis).invite_email(admin)
@@ -65,7 +70,10 @@ async def admin_cookies(db, redis, api) -> dict[str, str]:
 @pytest.fixture
 async def city(db: AsyncSession) -> City:
     row = City(
-        name="Ahmedabad", slug=f"ahd-{uuid.uuid4().hex[:6]}", state="Gujarat", is_active=True
+        name="Ahmedabad",
+        slug=f"ahd-{uuid.uuid4().hex[:6]}",
+        state="Gujarat",
+        status=CityStatus.LIVE,
     )
     db.add(row)
     await db.flush()
@@ -344,7 +352,7 @@ async def test_seed_is_idempotent(db: AsyncSession) -> None:
     seeded = CITIES[0]
     city = await db.scalar(select(City).where(City.slug == seeded.slug))
     areas = await db.scalar(select(func.count()).select_from(Area).where(Area.city_id == city.id))
-    assert city.is_active and city.state == "Gujarat"
+    assert city.status == CityStatus.LIVE and city.state == "Gujarat"
     assert areas == len(seeded.areas)
 
 

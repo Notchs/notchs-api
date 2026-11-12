@@ -114,6 +114,8 @@ async def test_blocked_or_deleted_customer_gets_the_same_error(
 ) -> None:
     token = token_of(await link_for(db, redis, user))
     user.status = status
+    if status == UserStatus.BLOCKED:
+        user.blocked_reason = "Fake bills (test)"
     await db.commit()
 
     response = await consume(api, token)
@@ -123,7 +125,7 @@ async def test_blocked_or_deleted_customer_gets_the_same_error(
 
 
 async def test_no_link_for_a_blocked_customer(db, redis, user: User) -> None:
-    user.status = UserStatus.BLOCKED
+    user.status, user.blocked_reason = UserStatus.BLOCKED, "Fake bills (test)"
     await db.commit()
 
     with pytest.raises(TokenInvalidException):

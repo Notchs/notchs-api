@@ -39,6 +39,15 @@ SPEC_COLUMNS = {
     "created_at": False,
     "updated_at": False,
     "deleted_at": True,
+    # Schema review (0012).
+    "signed_at": True,
+    "live_at": True,
+    "closed_at": True,
+    "status_reason": True,
+    "pincode": True,
+    "google_place_id": True,
+    "price_range": True,
+    "logo_s3_key": True,
 }
 
 
@@ -84,6 +93,7 @@ def test_venue_indexes_and_unique_constraints() -> None:
         "ix_venues_area_id",
         "ix_venues_category",
         "ix_venues_status",
+        "uq_venues_google_place_id",
     }
     assert uniques == {
         "uq_venues_city_id_slug": ["city_id", "slug"],

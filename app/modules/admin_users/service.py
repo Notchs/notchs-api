@@ -8,6 +8,8 @@ Nobody can remove their own admin access, and there is always at least one activ
 panel can't be locked. `python -m app.cli create-admin` stays for the very first admin.
 """
 
+from datetime import UTC, datetime
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,10 +22,11 @@ from app.modules.admin_users.exceptions import (
     AdminSelfChangeException,
     AdminUserNotFoundException,
 )
-from app.modules.admin_users.models import AdminRole, AdminUser
+from app.modules.admin_users.models import AdminRole, AdminRoleDefinition, AdminUser
+from app.modules.admin_users.roles import built_in_role
 from app.modules.admin_users.schemas import AdminUserIn, AdminUserOut, AdminUserUpdate
 from app.modules.auth.admin_auth import AdminAuthService
-from app.modules.auth.enums import SubjectType
+from app.modules.auth.enums import AccountStatus, RevokeReason, SubjectType
 from app.modules.auth.sessions import SessionService, Subject
 
 logger = get_logger(__name__)
@@ -35,8 +38,9 @@ def admin_out(admin: AdminUser) -> AdminUserOut:
         admin_user_code=admin.admin_user_code,
         name=admin.name,
         email=admin.email,
-        role=AdminRole(admin.role),
-        is_active=admin.is_active,
+        role=admin.access,
+        status=AccountStatus(admin.status),
+        is_active=admin.status != AccountStatus.DISABLED,
         has_password=admin.password_hash is not None,
         last_login_at=admin.last_login_at,
         created_at=admin.created_at,
@@ -57,7 +61,12 @@ class AdminUserService:
     ) -> tuple[AdminUserOut, EmailMessage]:
         if await self.session.scalar(select(AdminUser.id).where(AdminUser.email == body.email)):
             raise AdminEmailTakenException()
-        admin = AdminUser(name=body.name.strip(), email=body.email, role=body.role)
+        admin = AdminUser(
+            name=body.name.strip(),
+            email=body.email,
+            role=await built_in_role(self.session, body.role),
+            invited_by_admin_id=actor.id,
+        )
         self.session.add(admin)
         await self.session.flush()
         message = await self.auth.invite_email(admin)
@@ -68,42 +77,57 @@ class AdminUserService:
 
     async def update(self, actor: AdminUser, code: str, body: AdminUserUpdate) -> AdminUserOut:
         admin = await self._lock(code)
-        role = body.role or AdminRole(admin.role)
-        active = admin.is_active if body.is_active is None else body.is_active
+        role = body.role or admin.access
+        was_on = admin.status != AccountStatus.DISABLED
+        on = was_on if body.is_active is None else body.is_active
         loses_admin = (
-            admin.role == AdminRole.ADMIN
-            and admin.is_active
-            and (role != AdminRole.ADMIN or not active)
+            admin.access == AdminRole.ADMIN
+            and admin.status == AccountStatus.ACTIVE
+            and (role != AdminRole.ADMIN or not on)
         )
         if loses_admin and admin.id == actor.id:
             raise AdminSelfChangeException()
         if loses_admin and await self._other_active_admins(admin) == 0:
             raise AdminLastAdminException()
 
-        turned_off = admin.is_active and not active
-        admin.role, admin.is_active = role, active
+        if role != admin.access:
+            admin.role = await built_in_role(self.session, role)
+        turned_off = was_on and not on
+        if turned_off:
+            admin.status = AccountStatus.DISABLED
+            admin.disabled_at = datetime.now(UTC)
+            admin.disabled_by_admin_id = actor.id
+        elif on and not was_on:
+            # Back on: active again if they had set a password, else still to accept the invite.
+            admin.status = (
+                AccountStatus.ACTIVE if admin.password_hash is not None else AccountStatus.INVITED
+            )
+            admin.disabled_at = None
+            admin.disabled_by_admin_id = None
         await self.session.flush()
         if turned_off:
-            await SessionService(self.session).end_all(Subject(SubjectType.ADMIN, admin.id))
+            await SessionService(self.session).end_all(
+                Subject(SubjectType.ADMIN, admin.id), RevokeReason.ACCOUNT_DISABLED
+            )
         logger.info(
             "Admin %s set %s to %s, active=%s",
             actor.admin_user_code,
             admin.admin_user_code,
             role,
-            active,
+            on,
         )
         return admin_out(admin)
 
     async def new_link(self, actor: AdminUser, code: str) -> EmailMessage:
         admin = await self._lock(code)
-        if not admin.is_active:
+        if admin.status == AccountStatus.DISABLED:
             raise AdminInactiveException()
         logger.info("Admin %s sent %s a new link", actor.admin_user_code, admin.admin_user_code)
         return await self.auth.invite_email(admin)
 
     async def _lock(self, code: str) -> AdminUser:
         admin = await self.session.scalar(
-            select(AdminUser).where(AdminUser.admin_user_code == code).with_for_update()
+            select(AdminUser).where(AdminUser.admin_user_code == code).with_for_update(of=AdminUser)
         )
         if admin is None:
             raise AdminUserNotFoundException()
@@ -113,11 +137,12 @@ class AdminUserService:
         # Locked, so two admins demoting each other at once can't both succeed.
         others = await self.session.scalars(
             select(AdminUser.id)
+            .join(AdminRoleDefinition, AdminRoleDefinition.id == AdminUser.role_id)
             .where(
                 AdminUser.id != admin.id,
-                AdminUser.role == AdminRole.ADMIN,
-                AdminUser.is_active.is_(True),
+                AdminRoleDefinition.is_owner.is_(True),
+                AdminUser.status == AccountStatus.ACTIVE,
             )
-            .with_for_update()
+            .with_for_update(of=AdminUser)
         )
         return len(others.all())

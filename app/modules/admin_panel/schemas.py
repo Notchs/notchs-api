@@ -45,6 +45,8 @@ class VenueStatusTarget(StrEnum):
 
 class VenueStatusIn(BaseSchema):
     status: VenueStatusTarget
+    # Why it is paused or closed. Kept for the team, never shown publicly.
+    reason: str | None = Field(None, min_length=3, max_length=200)
 
 
 class AdminNotchRow(BaseSchema):
@@ -83,6 +85,8 @@ class CustomerStatusTarget(StrEnum):
 
 class CustomerStatusIn(BaseSchema):
     status: CustomerStatusTarget
+    # Why they are blocked. Kept for the team, never shown to venues.
+    reason: str | None = Field(None, min_length=3, max_length=200)
 
 
 class CustomerDeleteIn(BaseSchema):

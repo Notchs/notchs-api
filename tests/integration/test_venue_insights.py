@@ -119,7 +119,7 @@ async def test_only_this_venues_visits(api: AsyncClient, db, owner) -> None:  # 
 async def test_revoked_visits_do_not_count(api: AsyncClient, db, owner) -> None:  # noqa: F811
     venue = await db.get(Venue, owner["venue_id"])
     row = await visit(db, await add_customer(db), venue, ago(hours=2))
-    row.status = VisitStatus.REVOKED
+    row.status, row.revoked_reason = VisitStatus.REVOKED, "Fraud (test)"
     await db.commit()
 
     data = (await api.get("/venue/insights/overview", cookies=owner["cookies"])).json()["data"]
@@ -179,7 +179,7 @@ async def test_guest_numbers_stay_with_the_person(
     venue = await db.get(Venue, owner["venue_id"])
     first, second = await add_customer(db), await add_customer(db)
     revoked = await visit(db, first, venue, ago(days=3))
-    revoked.status = VisitStatus.REVOKED
+    revoked.status, revoked.revoked_reason = VisitStatus.REVOKED, "Fraud (test)"
     await visit(db, second, venue, ago(days=2))
     await visit(db, first, venue, ago(days=1), visit_no=1)
 

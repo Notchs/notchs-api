@@ -37,7 +37,7 @@ async def test_creates_the_first_admin_once(db, redis, outbox, monkeypatch) -> N
 
     assert (created, again) == (True, False)
     admins = (await db.scalars(select(AdminUser))).all()
-    assert [(a.email, a.name, a.role) for a in admins] == [(EMAIL, "Harsh", AdminRole.ADMIN)]
+    assert [(a.email, a.name, a.access) for a in admins] == [(EMAIL, "Harsh", AdminRole.ADMIN)]
     assert len(outbox.sent) == 1
     assert outbox.sent[0].to == EMAIL
     assert f"{settings.ADMIN_APP_URL}/set-password?token=" in outbox.sent[0].text

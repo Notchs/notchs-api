@@ -147,7 +147,7 @@ class ScanService:
         a customer who pressed Send late is never locked out."""
         key = f"rl:scan_code:{user.id}"
         if await rate_limit.is_limited(self.redis, key, limit=MAX_WRONG_CODES):
-            return None, RejectReason.WRONG_CODE
+            return None, RejectReason.TOO_MANY_ATTEMPTS
 
         secret = crypto.decrypt(counter.totp_secret_enc)
         interval = counter.code_interval_s
@@ -175,6 +175,8 @@ class ScanService:
         scan_session = self._session_row(
             user, message_id, scan, now, venue, counter, status=ScanStatus.VERIFIED
         )
+        # How old the code was: seconds since its time slot started.
+        scan_session.code_age_s = max(0, int(now.timestamp()) - slot * counter.code_interval_s)
         self.session.add(scan_session)
         await self.session.flush()
         visit, earned = await self.add_visit(user, venue, scan_session, visited_at=now, slot=slot)
@@ -205,20 +207,27 @@ class ScanService:
             visit_no_at_venue=visit_no,
             code_slot=slot,
             verification_level=level,
+            niche=venue.category,
         )
         self.session.add(visit)
         await self.session.flush()
 
         earned = visit_points(visit_no, venue.category)
         self.session.add_all(
-            PointsEntry(user_id=user.id, visit_id=visit.id, reason=reason, points=points)
+            PointsEntry(
+                user_id=user.id,
+                visit_id=visit.id,
+                reason=reason,
+                points=points,
+                city_id=venue.city_id,
+            )
             for reason, points in earned
         )
         if user.city_id is None:
             user.city_id = venue.city_id
         await self.session.flush()
         # Their inviter, if any, gets Star Points for this first real Notch (referrals module).
-        await reward_first_notch(self.session, user.id, now=visited_at)
+        await reward_first_notch(self.session, user.id, now=visited_at, visit_id=visit.id)
         return visit, sum(points for _, points in earned)
 
     async def _reject(

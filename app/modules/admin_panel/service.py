@@ -33,6 +33,7 @@ from app.modules.admin_panel.schemas import (
 )
 from app.modules.admin_users.models import AdminUser
 from app.modules.leaderboards.service import LeaderboardService
+from app.modules.referrals.service import cancel_for_removed_visit
 from app.modules.scans.models import Visit, VisitStatus
 from app.modules.users.deletion import delete_customer
 from app.modules.users.models import User, UserStatus
@@ -40,6 +41,8 @@ from app.modules.venues.counters import ONLINE_WITHIN
 from app.modules.venues.models import Venue, VenueStatus
 
 logger = get_logger(__name__)
+
+NO_REASON_GIVEN = "No reason given"
 
 # Which statuses an admin may move a venue to, from each status. A closed venue stays closed;
 # going live needs a paired counter phone (pairing normally does it).
@@ -102,7 +105,12 @@ class AdminPanelService:
         return PaginatedResponse.build(items, total, pagination.page, pagination.size)
 
     async def set_venue_status(
-        self, admin: AdminUser, venue_code: str, target: VenueStatusTarget
+        self,
+        admin: AdminUser,
+        venue_code: str,
+        target: VenueStatusTarget,
+        *,
+        reason: str | None = None,
     ) -> Venue:
         venue = await self.repository.venue_by_code(venue_code, for_update=True)
         if venue is None:
@@ -117,7 +125,15 @@ class AdminPanelService:
         ):
             raise AdminCounterNotPairedException()
         before = venue.status
+        now = datetime.now(UTC)
         venue.status = target
+        # When it went live, closed or reopened, and why it is paused or closed.
+        if target == VenueStatus.COUNTER_LIVE and venue.live_at is None:
+            venue.live_at = now
+        if target == VenueStatus.CLOSED:
+            venue.closed_at = now
+        paused_or_closed = target in (VenueStatus.PAUSED, VenueStatus.CLOSED)
+        venue.status_reason = reason if paused_or_closed else None
         await self.session.flush()
         logger.info(
             "Admin %s changed venue %s from %s to %s", admin.id, venue.venue_code, before, target
@@ -153,14 +169,15 @@ class AdminPanelService:
         points = await self.repository.visit_points(visit.id)
         if visit.status != VisitStatus.REVOKED:
             visit.status = VisitStatus.REVOKED
+            visit.revoked_at = datetime.now(UTC)
+            visit.revoked_reason = reason
+            visit.revoked_by_admin_id = admin.id
             await self.session.flush()
+            # The reason is admin-written text: stored, not logged.
             logger.info(
-                "Admin %s removed Notch %s at venue %s (%s)",
-                admin.id,
-                notch_no,
-                venue.venue_code,
-                reason,
+                "Admin %s removed Notch %s at venue %s", admin.id, notch_no, venue.venue_code
             )
+            await cancel_for_removed_visit(self.session, visit.id)
             # Ranks are rebuilt from the database every hour; take the points off now too.
             if visit.user_id is not None:
                 try:
@@ -195,7 +212,12 @@ class AdminPanelService:
         return PaginatedResponse.build(items, total, pagination.page, pagination.size)
 
     async def set_customer_status(
-        self, admin: AdminUser, handle: str, target: CustomerStatusTarget
+        self,
+        admin: AdminUser,
+        handle: str,
+        target: CustomerStatusTarget,
+        *,
+        reason: str | None = None,
     ) -> None:
         user = await self.repository.customer_by_handle(handle)
         if user is None or user.status == UserStatus.DELETED:
@@ -203,6 +225,12 @@ class AdminPanelService:
         if user.status == target:
             return
         user.status = target
+        if target == UserStatus.BLOCKED:
+            # Every block says when and why (the panel may not ask for a reason yet).
+            user.blocked_at = datetime.now(UTC)
+            user.blocked_reason = reason or NO_REASON_GIVEN
+        else:
+            user.blocked_at = user.blocked_reason = None
         await self.session.flush()
         logger.info("Admin %s set customer %s to %s", admin.id, user.id, target)
 

@@ -27,7 +27,12 @@ from app.modules.auth.password_auth import (
     PasswordAuthService,
     PasswordLogin,
 )
-from app.modules.auth.sessions import IssuedSession, Subject, active_venue_member
+from app.modules.auth.sessions import (
+    IssuedSession,
+    Subject,
+    active_venue_member,
+    enabled_venue_member,
+)
 from app.modules.venues.models import Venue, VenueMember
 
 __all__ = ["MAX_LOGIN_FAILURES", "LoggedIn", "VenueAuthService", "venue_subject"]
@@ -44,6 +49,7 @@ VENUE_MEMBERS = AccountKind(
     subject_type=SubjectType.VENUE_MEMBER,
     model=VenueMember,
     load_active=active_venue_member,
+    load_enabled=enabled_venue_member,
     subject_of=venue_subject,
     subject_id_of=lambda token: token.venue_member_id,
     reset_email=lambda member, raw: messages.password_reset_email(

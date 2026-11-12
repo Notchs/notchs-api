@@ -15,6 +15,7 @@ from app.clients.email import EmailClient
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.modules.admin_users.models import AdminRole, AdminUser
+from app.modules.admin_users.roles import built_in_role
 from app.modules.auth.admin_auth import AdminAuthService
 
 logger = get_logger(__name__)
@@ -34,7 +35,9 @@ async def ensure_first_admin(
         await session.rollback()
         return False
     admin = AdminUser(
-        email=email, name=settings.FIRST_ADMIN_NAME.strip()[:60], role=AdminRole.ADMIN
+        email=email,
+        name=settings.FIRST_ADMIN_NAME.strip()[:60],
+        role=await built_in_role(session, AdminRole.ADMIN),
     )
     session.add(admin)
     await session.flush()

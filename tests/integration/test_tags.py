@@ -556,7 +556,7 @@ async def test_an_old_menu_gets_the_closed_reply(db, bot_under_test, meta) -> No
 
 async def test_a_revoked_visit_is_closed(db, bot_under_test, meta) -> None:  # noqa: F811
     tag, visit, user = await visit_with_menu(db, bot_under_test)
-    visit.status = "revoked"
+    visit.status, visit.revoked_reason = "revoked", "Fraud (test)"
     await db.commit()
 
     await receive(db, bot_under_test, user.phone_e164, tag.name, button_id=_row(visit, tag))

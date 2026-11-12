@@ -114,9 +114,21 @@ class VenueService(BaseService[Venue]):
     ) -> Venue:
         venue = await self.get_by_id(id_)
         data: dict[str, Any] = {"status": status}
-        # Remember who signed the venue the first time it is marked as signed.
-        if status is VenueStatus.SIGNED and admin_id and venue.signed_by_admin_id is None:
-            data["signed_by_admin_id"] = admin_id
+        now = datetime.now(UTC)
+        # Remember who signed the venue, and when, the first time it is marked as signed.
+        if status is VenueStatus.SIGNED:
+            if admin_id and venue.signed_by_admin_id is None:
+                data["signed_by_admin_id"] = admin_id
+            if venue.signed_at is None:
+                data["signed_at"] = now
+        if status is VenueStatus.COUNTER_LIVE and venue.live_at is None:
+            data["live_at"] = now
+        if status is VenueStatus.CLOSED:
+            data["closed_at"] = now
+        elif venue.closed_at is not None:
+            data["closed_at"] = None  # reopened
+        if status not in (VenueStatus.PAUSED, VenueStatus.CLOSED):
+            data["status_reason"] = None
         return await self.repository.update(venue, data)
 
     async def delete(self, id_: uuid.UUID) -> None:

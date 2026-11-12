@@ -22,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
+from typing import Any
 
 from redis.asyncio import Redis
 from sqlalchemy import Select, func, or_, select
@@ -194,7 +195,7 @@ class LeaderboardService:
             )
         }
         # Every city they ever had points in, so a board they no longer belong on is cleared.
-        city = func.coalesce(Venue.city_id, User.city_id)
+        city = _points_city()
         cities = set(
             (
                 await session.scalars(
@@ -223,10 +224,16 @@ class LeaderboardService:
             await pipe.execute()
 
 
+def _points_city() -> Any:
+    """The city points count for: fixed on the ledger row since 0012. The fallbacks only matter
+    for a row a future code path forgets to fill."""
+    return func.coalesce(PointsEntry.city_id, Venue.city_id, User.city_id)
+
+
 def _totals(now: datetime) -> tuple[Select, Select]:
     """(city, customer, points) from the ledger: all time, and this month (India time).
     Revoked visits and blocked or deleted customers don't count."""
-    city = func.coalesce(Venue.city_id, User.city_id)
+    city = _points_city()
     counted_at = func.coalesce(Visit.visited_at, PointsEntry.created_at)
     query = (
         select(city, PointsEntry.user_id, func.sum(PointsEntry.points))

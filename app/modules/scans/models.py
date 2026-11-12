@@ -22,10 +22,12 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Entity, InsertOnlyEntity, in_values
+from app.modules.venues.models import VenueCategory
 
 
 class VisitStatus(StrEnum):
@@ -59,6 +61,13 @@ class RejectReason(StrEnum):
     ALREADY_TODAY = "already_today"  # one stamp per venue per day
     DAILY_LIMIT = "daily_limit"  # already notched in this niche today (another venue)
     BLOCKED_CUSTOMER = "blocked_customer"
+    # Too many wrong live codes in a short time (scans/service.py): someone guessing codes.
+    TOO_MANY_ATTEMPTS = "too_many_attempts"
+
+
+class ScanSource(StrEnum):
+    CODE = "code"  # the pre-typed message from the counter's QR
+    BILL_CLAIM = "bill_claim"  # an approved bill-photo claim (claims module), no code
 
 
 class ScanSession(InsertOnlyEntity):
@@ -74,6 +83,8 @@ class ScanSession(InsertOnlyEntity):
             "(status = 'rejected') = (reject_reason IS NOT NULL)",
             name="reject_reason_when_rejected",
         ),
+        CheckConstraint(in_values("source", ScanSource), name="source_valid"),
+        CheckConstraint("code_age_s >= 0", name="code_age_non_negative"),
         # Insights (busy hours) and abuse checks read by venue or customer and time.
         Index("ix_scan_sessions_venue_created_at", "venue_id", "created_at"),
         Index("ix_scan_sessions_user_created_at", "user_id", "created_at"),
@@ -97,6 +108,12 @@ class ScanSession(InsertOnlyEntity):
     status: Mapped[str] = mapped_column(String(10), index=True)
     reject_reason: Mapped[str | None] = mapped_column(String(20))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source: Mapped[str] = mapped_column(
+        String(12), default=ScanSource.CODE, server_default=ScanSource.CODE.value
+    )
+    # How old the live code was when it arrived, in seconds (null without a usable code): real
+    # data for choosing how long a code stays valid.
+    code_age_s: Mapped[int | None] = mapped_column(Integer)
 
 
 class Visit(Entity):
@@ -112,6 +129,17 @@ class Visit(Entity):
         ),
         CheckConstraint("notch_no > 0", name="notch_no_positive"),
         CheckConstraint("visit_no_at_venue > 0", name="visit_no_at_venue_positive"),
+        CheckConstraint(in_values("niche", VenueCategory), name="niche_valid"),
+        # A removed Notch always says why (removals before 0012: "Not recorded (before
+        # migration 0012)"). The date and admin are empty for those old removals.
+        CheckConstraint(
+            "(status = 'revoked') = (revoked_reason IS NOT NULL)",
+            name="revoked_reason_when_revoked",
+        ),
+        CheckConstraint(
+            "status = 'revoked' OR (revoked_at IS NULL AND revoked_by_admin_id IS NULL)",
+            name="revoked_at_only_when_revoked",
+        ),
         Index("ix_visits_venue_visited_at", "venue_id", "visited_at"),
         Index("ix_visits_user_visited_at", "user_id", "visited_at"),
     )
@@ -138,6 +166,14 @@ class Visit(Entity):
     status: Mapped[str] = mapped_column(
         String(10), default=VisitStatus.VALID, server_default=VisitStatus.VALID.value
     )
+    # The niche (the venue category, scans/niches.py) at the time of the visit, so a later
+    # change of the venue's category never moves old visits. The daily niche limit reads this.
+    niche: Mapped[str] = mapped_column(String(12))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_reason: Mapped[str | None] = mapped_column(String(255))
+    revoked_by_admin_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL")
+    )
 
 
 class PointsEntry(InsertOnlyEntity):
@@ -147,6 +183,19 @@ class PointsEntry(InsertOnlyEntity):
     __table_args__ = (
         CheckConstraint(in_values("reason", PointsReason), name="reason_valid"),
         Index("ix_points_ledger_user_created_at", "user_id", "created_at"),
+        # A visit earns each kind of points once, even if two messages race.
+        Index(
+            "uq_points_ledger_visit_reason",
+            "visit_id",
+            "reason",
+            unique=True,
+            postgresql_where=text("visit_id IS NOT NULL"),
+        ),
+        # A correction always says why; other rows carry no note or admin.
+        CheckConstraint("(reason = 'adjustment') = (note IS NOT NULL)", name="note_on_adjustments"),
+        CheckConstraint(
+            "reason = 'adjustment' OR admin_user_id IS NULL", name="admin_only_on_adjustments"
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
@@ -156,3 +205,13 @@ class PointsEntry(InsertOnlyEntity):
     )
     reason: Mapped[str] = mapped_column(String(20))
     points: Mapped[int] = mapped_column(Integer)
+    # Adjustments: who made it and why.
+    admin_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("admin_users.id", ondelete="SET NULL")
+    )
+    note: Mapped[str | None] = mapped_column(String(255))
+    # The city these points count for, fixed when given (the venue's city, or the customer's
+    # home city for an adjustment). Leaderboards read it.
+    city_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("cities.id", ondelete="SET NULL"), index=True
+    )

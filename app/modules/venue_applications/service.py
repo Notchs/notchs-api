@@ -18,7 +18,7 @@ from app.modules.auth.emails import is_disposable, normalize_email
 from app.modules.auth.enums import OtpPurpose
 from app.modules.auth.exceptions import EmailNotAllowedException
 from app.modules.auth.otp import EmailCodes
-from app.modules.locations.models import City
+from app.modules.locations.models import City, CityStatus
 from app.modules.venue_applications import messages
 from app.modules.venue_applications.exceptions import (
     ApplicationCityInvalidException,
@@ -26,7 +26,10 @@ from app.modules.venue_applications.exceptions import (
     ApplicationRateLimitedException,
     VerificationExpiredException,
 )
-from app.modules.venue_applications.models import ApplicationStatus, VenueApplication
+from app.modules.venue_applications.models import (
+    OPEN_STATUSES,
+    VenueApplication,
+)
 from app.modules.venue_applications.schemas import ApplicationCreate
 from app.modules.venues.models import VenueMember
 
@@ -75,7 +78,7 @@ class VenueApplicationService:
             raise ApplicationRateLimitedException()
 
         city = await self.session.get(City, form.city_id)
-        if city is None or not city.is_active:
+        if city is None or city.status != CityStatus.LIVE:
             raise ApplicationCityInvalidException()
         if await self._email_taken(email):
             raise ApplicationDuplicateException()
@@ -108,7 +111,7 @@ class VenueApplicationService:
         """A pending application or an existing venue login already uses this address."""
         pending = exists().where(
             VenueApplication.email == email,
-            VenueApplication.status == ApplicationStatus.PENDING,
+            VenueApplication.status.in_(OPEN_STATUSES),
         )
         member = exists().where(VenueMember.email == email)
         return bool(await self.session.scalar(select(pending | member)))

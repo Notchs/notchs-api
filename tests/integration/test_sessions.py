@@ -12,10 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.main import app
-from app.modules.admin_users.models import AdminUser
+from app.modules.admin_users.models import AdminRole, AdminUser
+from app.modules.admin_users.roles import built_in_role
 from app.modules.auth.access_tokens import create_access_token
 from app.modules.auth.dependencies import CurrentAdmin, CurrentUser, CurrentVenueMember
-from app.modules.auth.enums import SubjectType
+from app.modules.auth.enums import AccountStatus, RevokeReason, SubjectType
 from app.modules.auth.exceptions import NotAuthenticatedException
 from app.modules.auth.models import AuthToken
 from app.modules.auth.sessions import IssuedSession, SessionService, Subject
@@ -63,6 +64,8 @@ async def member(db: AsyncSession) -> VenueMember:
         phone_e164="+919800000001",
         name="Owner",
         email=f"owner-{uuid.uuid4().hex[:6]}@kahwa.in",
+        status=AccountStatus.ACTIVE,
+        password_hash="not-a-real-hash",
     )
     db.add(row)
     await db.flush()
@@ -71,7 +74,13 @@ async def member(db: AsyncSession) -> VenueMember:
 
 @pytest.fixture
 async def admin(db: AsyncSession) -> AdminUser:
-    row = AdminUser(name="Abhishek", email=f"a-{uuid.uuid4().hex[:6]}@notchs.com")
+    row = AdminUser(
+        name="Abhishek",
+        email=f"a-{uuid.uuid4().hex[:6]}@notchs.com",
+        role=await built_in_role(db, AdminRole.ADMIN),
+        status=AccountStatus.ACTIVE,
+        password_hash="not-a-real-hash",
+    )
     db.add(row)
     await db.flush()
     return row
@@ -168,6 +177,7 @@ async def test_reuse_after_grace_revokes_the_whole_family(
     assert replay.json()["error"]["code"] == "auth.not_authenticated"
     assert after.status_code == 401  # the thief's copy and the real one are both dead
     assert (await stored(db, new_rt)).revoked_at is not None
+    assert (await stored(db, new_rt)).revoke_reason == RevokeReason.REUSE_DETECTED
 
 
 async def test_reuse_within_grace_fails_without_logging_out(
@@ -219,7 +229,7 @@ async def test_deactivated_member_cannot_refresh(
     api: AsyncClient, db: AsyncSession, member: VenueMember
 ) -> None:
     issued = await start(db, venue_subject(member))
-    member.is_active = False
+    member.status = AccountStatus.DISABLED
     await db.commit()
 
     assert (await refresh(api, "venue", issued.refresh_token)).status_code == 401
@@ -238,6 +248,7 @@ async def test_logout_revokes_and_clears_cookies(
     assert cleared["nx_venue_at"]["nx_venue_at"]["max-age"] == "0"
     assert cleared["nx_venue_rt"]["nx_venue_rt"]["path"] == f"{settings.API_V1_PREFIX}/auth/venue"
     assert (await refresh(api, "venue", issued.refresh_token)).status_code == 401
+    assert (await stored(db, issued.refresh_token)).revoke_reason == RevokeReason.LOGOUT
 
 
 async def test_logout_without_a_session_still_succeeds(api: AsyncClient) -> None:
@@ -249,7 +260,9 @@ async def test_end_all_can_keep_the_current_session(db: AsyncSession, member: Ve
     laptop, phone = await start(db, subject), await start(db, subject)
     laptop_family = (await stored(db, laptop.refresh_token)).family_id
 
-    revoked = await SessionService(db).end_all(subject, keep_family=laptop_family)
+    revoked = await SessionService(db).end_all(
+        subject, RevokeReason.PASSWORD_CHANGED, keep_family=laptop_family
+    )
     await db.commit()
 
     assert revoked == 1

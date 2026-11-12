@@ -3,7 +3,7 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import case, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,7 @@ from app.modules.whatsapp.models import (
 from app.modules.whatsapp.webhook import InboundMessage, StatusUpdate, WebhookEvents
 
 MAX_ERROR_CODE_LENGTH = 20
+MAX_ERROR_TITLE_LENGTH = 255
 
 # Statuses only move forward: a late "delivered" never overwrites "read".
 _RANK = {
@@ -78,6 +79,13 @@ class WhatsAppWebhookService:
         values: dict[str, object] = {"status": status.status}
         if status.error_code is not None:
             values["error_code"] = status.error_code[:MAX_ERROR_CODE_LENGTH]
+        if status.error_title is not None:
+            values["error_title"] = status.error_title[:MAX_ERROR_TITLE_LENGTH]
+        # When it arrived and was read. "read" implies delivered, if that came late or never.
+        if status.status in (MessageStatus.DELIVERED, MessageStatus.READ):
+            values["delivered_at"] = func.coalesce(WhatsAppMessage.delivered_at, func.now())
+        if status.status == MessageStatus.READ:
+            values["read_at"] = func.coalesce(WhatsAppMessage.read_at, func.now())
         result = await self.session.execute(
             update(WhatsAppMessage)
             .where(

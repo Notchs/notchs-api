@@ -42,6 +42,15 @@ class User(Entity):
         CheckConstraint(
             "phone_e164 IS NOT NULL OR deleted_at IS NOT NULL", name="phone_unless_deleted"
         ),
+        # A block always says why (blocks before 0012: "Not recorded (before migration 0012)").
+        # The date is empty for those old blocks.
+        CheckConstraint(
+            "(status = 'blocked') = (blocked_reason IS NOT NULL)",
+            name="blocked_reason_when_blocked",
+        ),
+        CheckConstraint(
+            "status = 'blocked' OR blocked_at IS NULL", name="blocked_at_only_when_blocked"
+        ),
     )
 
     # Login identity, e.g. +919876543210. Never shown to venues. None once deleted.
@@ -81,3 +90,7 @@ class User(Entity):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # When the account was deleted; its personal data is wiped then (users/deletion.py).
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set by the team when blocking (e.g. fake bill claims); cleared on unblock. The history
+    # stays in audit_logs. Never shown to venues.
+    blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    blocked_reason: Mapped[str | None] = mapped_column(String(200))

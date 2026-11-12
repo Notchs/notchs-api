@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.scans.models import PointsEntry, ScanSession, Visit, VisitStatus
 from app.modules.users.models import User
-from app.modules.venues.models import CounterDevice, Venue
+from app.modules.venues.models import CounterDevice, CounterStatus, Venue
 
 
 class ScanRepository:
@@ -53,9 +53,7 @@ class ScanRepository:
         return await self.session.scalar(
             select(CounterDevice).where(
                 CounterDevice.venue_id == venue_id,
-                CounterDevice.revoked_at.is_(None),
-                CounterDevice.is_active.is_(True),
-                CounterDevice.token_hash.is_not(None),
+                CounterDevice.status == CounterStatus.ACTIVE,
             )
         )
 
@@ -72,12 +70,11 @@ class ScanRepository:
         """A counted visit today at any venue of this niche (one Notch per niche per day)."""
         found = await self.session.scalar(
             select(Visit.id)
-            .join(Venue, Venue.id == Visit.venue_id)
             .where(
                 Visit.user_id == user_id,
                 Visit.visit_date == day,
                 Visit.status == VisitStatus.VALID,
-                Venue.category == category,
+                Visit.niche == category,
             )
             .limit(1)
         )

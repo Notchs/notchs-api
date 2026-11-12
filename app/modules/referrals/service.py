@@ -24,7 +24,12 @@ from app.modules.referrals.exceptions import (
     ReferralCodeInvalidException,
     ReferralNotAllowedException,
 )
-from app.modules.referrals.models import Referral, StarPointsEntry, StarPointsReason
+from app.modules.referrals.models import (
+    Referral,
+    ReferralStatus,
+    StarPointsEntry,
+    StarPointsReason,
+)
 from app.modules.referrals.schemas import ReferralOut
 from app.modules.scans.models import Visit, VisitStatus
 from app.modules.users.models import User, UserStatus
@@ -53,9 +58,10 @@ class ReferralService:
         )
         invited, rewarded = (
             await self.session.execute(
-                select(func.count(), func.count(Referral.rewarded_at)).where(
-                    Referral.referrer_id == user.id
-                )
+                select(
+                    func.count(),
+                    func.count().filter(Referral.status == ReferralStatus.REWARDED),
+                ).where(Referral.referrer_id == user.id)
             )
         ).one()
         inviter = await self.session.scalar(
@@ -108,26 +114,34 @@ class ReferralService:
 
 
 async def reward_first_notch(
-    session: AsyncSession, user_id: uuid.UUID, *, now: datetime, require_visit: bool = False
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    now: datetime,
+    require_visit: bool = False,
+    visit_id: uuid.UUID | None = None,
 ) -> bool:
-    """Called when a customer gets a counted Notch. Rewards their inviter once. True if Star
+    """Called when a customer gets a counted Notch (`visit_id`), or with `require_visit` when
+    an inviter is added after their first Notch. Rewards their inviter once. True if Star
     Points were given. The referral row is locked, so two Notchs at once reward once."""
     referral = await session.scalar(
         select(Referral)
-        .where(Referral.referred_id == user_id, Referral.rewarded_at.is_(None))
+        .where(Referral.referred_id == user_id, Referral.status == ReferralStatus.PENDING)
         .with_for_update(skip_locked=True)
     )
     if referral is None:
         return False
     if require_visit:
-        has_notch = await session.scalar(
+        visit_id = await session.scalar(
             select(Visit.id)
             .where(Visit.user_id == user_id, Visit.status == VisitStatus.VALID)
+            .order_by(Visit.visited_at)
             .limit(1)
         )
-        if has_notch is None:
+        if visit_id is None:
             return False
     referral.rewarded_at = now
+    referral.qualifying_visit_id = visit_id
     month_start = ist_date(now).replace(day=1)
     rewarded_this_month = await session.scalar(
         select(func.count())
@@ -139,9 +153,11 @@ async def reward_first_notch(
         )
     )
     if (rewarded_this_month or 0) >= MAX_REWARDS_PER_MONTH:
+        referral.status = ReferralStatus.CAPPED
         await session.flush()
         logger.info("Referral %s over the monthly cap: no Star Points", referral.id)
         return False
+    referral.status = ReferralStatus.REWARDED
     session.add(
         StarPointsEntry(
             user_id=referral.referrer_id,
@@ -152,3 +168,46 @@ async def reward_first_notch(
     )
     await session.flush()
     return True
+
+
+async def cancel_for_removed_visit(session: AsyncSession, visit_id: uuid.UUID) -> int:
+    """A Notch was removed as fraud: invites it triggered are cancelled and their Star Points
+    taken back (team decision, 12 Nov 2026), so a fake Notch never pays out. A balance never
+    goes below zero: only what is left is taken back. Returns how many invites were cancelled."""
+    referrals = (
+        await session.scalars(
+            select(Referral)
+            .where(
+                Referral.qualifying_visit_id == visit_id,
+                Referral.status.in_((ReferralStatus.REWARDED, ReferralStatus.CAPPED)),
+            )
+            .with_for_update()
+        )
+    ).all()
+    for referral in referrals:
+        if referral.status == ReferralStatus.REWARDED:
+            # Lock the inviter's rows so two removals can't both read the same balance.
+            await session.execute(
+                select(StarPointsEntry.id)
+                .where(StarPointsEntry.user_id == referral.referrer_id)
+                .with_for_update()
+            )
+            balance = await session.scalar(
+                select(func.coalesce(func.sum(StarPointsEntry.points), 0)).where(
+                    StarPointsEntry.user_id == referral.referrer_id
+                )
+            )
+            take_back = min(REFERRAL_STAR_POINTS, balance or 0)
+            if take_back > 0:
+                session.add(
+                    StarPointsEntry(
+                        user_id=referral.referrer_id,
+                        referral_id=referral.id,
+                        reason=StarPointsReason.REFERRAL_REVERSED,
+                        points=-take_back,
+                    )
+                )
+        referral.status = ReferralStatus.CANCELLED
+        logger.info("Referral %s cancelled: its qualifying Notch was removed", referral.id)
+    await session.flush()
+    return len(referrals)

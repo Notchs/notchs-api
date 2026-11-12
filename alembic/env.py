@@ -28,10 +28,17 @@ schema = settings.DB_SCHEMA  # validated as a plain identifier in Settings
 VERSION_TABLE = "alembic_version"
 
 
+# Monthly partitions of audit_logs (audit_logs_2026_11, audit_logs_default, ...) are made by
+# migrations and the partition job, not by models.
+PARTITION_PREFIXES = ("audit_logs_",)
+
+
 def _include_name(name: str | None, type_: str, parent_names: dict[str, str | None]) -> bool:
     # The version table lives in DB_SCHEMA next to our tables, so autogenerate would see it
-    # as a table missing from the models and try to drop it.
-    return not (type_ == "table" and name == VERSION_TABLE)
+    # as a table missing from the models and try to drop it. Same for partitions.
+    if type_ != "table" or name is None:
+        return True
+    return name != VERSION_TABLE and not name.startswith(PARTITION_PREFIXES)
 
 
 def _configure(**kwargs: object) -> None:

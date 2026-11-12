@@ -72,7 +72,7 @@ def get_session_service(session: DBSession) -> SessionService:
 
 async def current_full_admin(admin: Annotated[AdminUser, Depends(current_admin)]) -> AdminUser:
     """An admin with the `admin` role. Reviewers (proof review) get 403 here."""
-    if admin.role != AdminRole.ADMIN:
+    if admin.access != AdminRole.ADMIN:
         raise AdminRoleRequiredException()
     return admin
 

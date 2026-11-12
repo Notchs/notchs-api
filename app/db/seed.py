@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.ids import new_uuid
-from app.modules.locations.models import Area, City
+from app.modules.locations.models import Area, City, CityStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,10 +47,16 @@ async def seed(session: AsyncSession) -> dict[str, int]:
     for city in CITIES:
         await session.execute(
             insert(City)
-            .values(id=new_uuid(), name=city.name, slug=city.slug, state=city.state, is_active=True)
+            .values(
+                id=new_uuid(),
+                name=city.name,
+                slug=city.slug,
+                state=city.state,
+                status=CityStatus.LIVE,
+            )
             .on_conflict_do_update(
                 index_elements=[City.slug],
-                set_={"name": city.name, "state": city.state, "is_active": True},
+                set_={"name": city.name, "state": city.state, "status": CityStatus.LIVE},
             )
         )
         counts["cities"] += 1

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.auth.enums import SubjectType, TokenType
+from app.modules.auth.enums import RevokeReason, SubjectType, TokenType
 from app.modules.auth.exceptions import TokenInvalidException
 from app.modules.auth.models import AuthToken
 from app.modules.auth.sessions import SUBJECT_COLUMN, Subject
@@ -30,7 +30,7 @@ class OneTimeTokenService:
                 AuthToken.used_at.is_(None),
                 AuthToken.revoked_at.is_(None),
             )
-            .values(revoked_at=now)
+            .values(revoked_at=now, revoke_reason=RevokeReason.SUPERSEDED)
         )
         raw = new_token()
         self.session.add(

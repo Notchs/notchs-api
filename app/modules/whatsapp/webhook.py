@@ -45,6 +45,8 @@ class StatusUpdate:
     wa_message_id: str
     status: MessageStatus
     error_code: str | None
+    # Meta's short error title, e.g. "Re-engagement message". Never message text.
+    error_title: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,9 +156,14 @@ def _status(raw: dict[str, Any]) -> StatusUpdate | None:
     if not isinstance(wa_id, str) or status is None:
         return None  # e.g. "deleted" or "warning": nothing to record
     errors = _list(raw.get("errors"))
-    code = _dict(errors[0]).get("code") if errors else None
+    first_error = _dict(errors[0]) if errors else {}
+    code = first_error.get("code")
+    title = first_error.get("title")
     return StatusUpdate(
-        wa_message_id=wa_id, status=status, error_code=str(code) if code is not None else None
+        wa_message_id=wa_id,
+        status=status,
+        error_code=str(code) if code is not None else None,
+        error_title=title if isinstance(title, str) else None,
     )
 
 

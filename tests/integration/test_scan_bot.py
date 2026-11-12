@@ -1,5 +1,6 @@
 """Scans step 5 on a real database: what the WhatsApp bot does and says after a scan."""
 
+import hashlib
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -16,6 +17,7 @@ from app.clients.whatsapp import SendResult, WhatsAppSendError
 from app.core.config import settings
 from app.modules.auth.customer_auth import MAX_LINKS_PER_WINDOW, CustomerAuthService
 from app.modules.auth.models import AuthToken
+from app.modules.consents.models import Consent
 from app.modules.scans import replies, service, verifier
 from app.modules.scans.models import PointsEntry, RejectReason, ScanSession, Visit
 from app.modules.scans.service import MAX_PEOPLE_PER_CODE
@@ -89,6 +91,7 @@ async def add_customer(db: AsyncSession, *, agreed: bool = True, status: str = "
     user = User(
         phone_e164=phone(),
         status=status,
+        blocked_reason="Fake bills (test)" if status == "blocked" else None,
         consent_at=now if agreed else None,
         consent_version=CONSENT_VERSION if agreed else None,
     )
@@ -280,6 +283,16 @@ async def test_agreeing_records_it_and_sends_a_working_link(
     assert user.consent_at is not None
     assert user.age_confirmed_at == user.consent_at
     assert user.consent_version == CONSENT_VERSION
+    # The exact words they agreed to are kept with the version (DPDP).
+    (consent,) = (await db.scalars(select(Consent).where(Consent.user_id == user.id))).all()
+    assert (consent.purpose, consent.version, consent.channel) == (
+        "privacy_notice",
+        CONSENT_VERSION,
+        "whatsapp",
+    )
+    assert consent.wording == consent_text()
+    assert consent.wording_sha256 == hashlib.sha256(consent_text().encode()).hexdigest()
+    assert consent.accepted_at == user.consent_at
     (text,) = meta.texts()
     response = await api.post("/auth/customer/consume", json={"token": token_of(text)})
     assert response.status_code == 200, response.text
