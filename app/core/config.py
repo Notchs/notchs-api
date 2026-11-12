@@ -115,6 +115,13 @@ class Settings(BaseSettings):
     # test number). Counter phones put it in their scan QR.
     WHATSAPP_PUBLIC_NUMBER: str | None = None
 
+    # The most requests one visitor (IP address) may make in a minute, over the whole API: a
+    # backstop behind the per-feature limits. 0 turns it off. Health checks and Meta's webhook
+    # are not counted.
+    GLOBAL_RATE_LIMIT_PER_MINUTE: int = 600
+    # The largest request body the API reads (the WhatsApp webhook has its own limit).
+    MAX_REQUEST_BODY_BYTES: int = 1_000_000
+
     # An admin made from settings, for a deploy with no shell to run `create-admin`
     # (admin_users/bootstrap.py). At startup, if no admin has this email, one is created.
     # With FIRST_ADMIN_PASSWORD it can log in straight away (no email needed); without it, it is

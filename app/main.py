@@ -15,6 +15,7 @@ from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.redis import check_redis, redis_client
 from app.db.session import AsyncSessionLocal, check_connection, engine
+from app.middleware.protection import ProtectionMiddleware
 from app.middleware.request_context import RequestContextMiddleware
 from app.modules.admin_users.bootstrap import ensure_first_admin
 from app.modules.leaderboards.service import run_rebuilder
@@ -99,6 +100,8 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if docs_enabled else None,
     )
 
+    app.add_middleware(ProtectionMiddleware)
+    # Added last, so it runs first: every request is logged, refused ones included.
     app.add_middleware(RequestContextMiddleware)
     if settings.CORS_ORIGINS:
         app.add_middleware(

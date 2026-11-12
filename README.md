@@ -391,6 +391,30 @@ The first 100 places of each kind (the first 200 turfs, box grounds and gyms) ge
 A place gets its founding number, within its kind, when the team approves it. Kinds of place:
 café, restaurant, bar, hotel, turf / box ground / gym, theatre, other.
 
+## Protection on every request
+
+`app/middleware/protection.py` runs before any route:
+
+- **Global rate limit:** one visitor (IP address) gets `GLOBAL_RATE_LIMIT_PER_MINUTE` requests a
+  minute (default 600) over the whole API, then `429` with `Retry-After`. Health checks and Meta's
+  webhook are never counted. If Redis is down the limit is skipped, never the request. The
+  per-feature limits (logins, codes, scans, applications) still apply on top.
+- **The visitor's address** (`app/common/http.py`): the API is behind proxies, so it reads
+  Netlify's `X-Nf-Client-Connection-Ip`, then the edge's `CF-Connecting-IP`, then the last public
+  entry of `X-Forwarded-For`. The first entries of `X-Forwarded-For` can be made up and are never
+  used. Because a direct caller could still invent a header, anything that guards an account is
+  also counted per account: 20 wrong passwords for one account from anywhere lock it for 15
+  minutes.
+- **Body size:** more than `MAX_REQUEST_BODY_BYTES` (1 MB) is refused with `413`.
+- **Headers:** `X-Content-Type-Options: nosniff`, and `Cache-Control: no-store` unless the route
+  sets its own, so a CDN can never store one person's data and serve it to another.
+
+**Capacity** (measured on a laptop, one process, default pool of 5 database connections): about
+1,400 requests a second on a database-backed route, and 2,000 new customers scanning within
+seconds with every message handled and no over-counting. For real traffic, raise `DB_POOL_SIZE`
+and `DB_MAX_OVERFLOW` (and use the database's pooler, `DB_USE_POOLER=true`), and run on a
+plan that doesn't sleep.
+
 ## Deleting an account
 
 A customer deletes their account from the passport (`POST /me/delete` with `{"confirm": "DELETE"}`),
