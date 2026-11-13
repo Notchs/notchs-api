@@ -231,6 +231,25 @@ async def test_email_step_says_an_application_is_pending(
     assert len(outbox.sent) == sent  # no code for a taken address
 
 
+async def test_email_step_counts_an_application_waiting_for_more_info(
+    api: AsyncClient, db: AsyncSession, redis, outbox, city: City, email: str
+) -> None:
+    """The team asked for more details: the application is still open, not a fresh start."""
+    token = await verified_token(api, outbox, email)
+    assert (await submit(api, form(token, city))).status_code == 201
+    application = await db.scalar(select(VenueApplication).where(VenueApplication.email == email))
+    application.status = ApplicationStatus.NEEDS_INFO
+    await db.commit()
+    await redis.delete(f"otp:cd:application:{email}")
+    sent = len(outbox.sent)
+
+    response = await send_code(api, email)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "applications.pending"
+    assert len(outbox.sent) == sent
+
+
 async def test_email_step_says_the_email_has_a_venue_login(
     api: AsyncClient, db: AsyncSession, outbox, city: City, email: str
 ) -> None:

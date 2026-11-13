@@ -126,7 +126,7 @@ class VenueApplicationService:
             select(
                 exists().where(
                     VenueApplication.email == email,
-                    VenueApplication.status == ApplicationStatus.PENDING,
+                    VenueApplication.status.in_(OPEN_STATUSES),
                 )
             )
         )
