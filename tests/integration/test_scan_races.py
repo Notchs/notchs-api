@@ -242,3 +242,34 @@ async def test_two_menu_taps_at_once_save_once_and_reply_once(sessions, processo
     assert meta.texts() == [replies.tried_text(tag.name)]
     answers = select(func.count()).select_from(VisitTag).where(VisitTag.visit_id == visit_id)
     assert await count(sessions, answers) == 1
+
+
+async def test_a_rush_at_many_places_never_mixes_them_up(sessions, processor, meta) -> None:
+    """Different people scanning at different places in the same instant: every Notch lands at
+    the place whose code was sent, and each place's Notch numbers run 1, 2, 3 with no gaps."""
+    places = [await live_venue(sessions) for _ in range(6)]
+    per_place = MAX_PEOPLE_PER_CODE
+    scans: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID]] = []  # (message, customer, venue)
+    for venue, secret in places:
+        for _ in range(per_place):
+            user = await add_customer(sessions)
+            text = scan_text(venue.scan_code, code_now(secret))
+            [message_id] = await receive(sessions, meta_payload(user.phone_e164, text))
+            scans.append((message_id, user.id, venue.id))
+
+    # Interleaved, so no place's scans arrive together.
+    order = sorted(scans, key=lambda scan: scan[0].int % 97)
+    await asyncio.gather(*(processor.process(message_id) for message_id, _, _ in order))
+
+    async with sessions() as session:
+        for _, user_id, venue_id in scans:
+            visits = (await session.scalars(select(Visit).where(Visit.user_id == user_id))).all()
+            assert [v.venue_id for v in visits] == [venue_id]  # one Notch, at their own place
+            scan = await session.scalar(select(ScanSession).where(ScanSession.user_id == user_id))
+            assert scan.venue_id == venue_id
+        for venue, _ in places:
+            numbers = await session.scalars(
+                select(Visit.notch_no).where(Visit.venue_id == venue.id).order_by(Visit.notch_no)
+            )
+            assert numbers.all() == list(range(1, per_place + 1))
+    assert len(stamps(meta)) == len(places) * per_place
