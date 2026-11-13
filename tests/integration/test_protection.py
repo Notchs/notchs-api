@@ -4,9 +4,10 @@ password guessing stopped per account, whatever address it comes from."""
 import pytest
 from fakeredis import FakeAsyncRedis
 from httpx import AsyncClient
+from pydantic import SecretStr
 from starlette.requests import Request
 
-from app.common.http import client_ip
+from app.common.http import ClientAddress, client_address, client_ip
 from app.core.config import settings
 from app.middleware import protection
 from app.modules.auth.password_auth import MAX_LOGIN_FAILURES_PER_ACCOUNT
@@ -37,6 +38,50 @@ def request_with(headers: dict[str, str], peer: str = "10.201.5.9") -> Request:
 )
 def test_the_visitors_address(headers: dict[str, str], expected: str) -> None:
     assert client_ip(request_with(headers)) == expected
+
+
+def test_with_a_proxy_secret_only_the_website_is_believed(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "PROXY_SECRET", SecretStr("a-long-shared-secret-value"))
+    website = {
+        "X-Notchs-Proxy-Secret": "a-long-shared-secret-value",
+        "X-Notchs-Client-Ip": "49.36.1.2",
+        "CF-Connecting-IP": "3.7.8.9",  # Netlify's server, as the edge sees it
+    }
+    forged = {
+        "X-Notchs-Proxy-Secret": "a-guess",
+        "X-Notchs-Client-Ip": "1.2.3.4",
+        "X-Nf-Client-Connection-Ip": "1.2.3.4",
+        "CF-Connecting-IP": "49.40.5.5",  # the caller's real address
+    }
+
+    assert client_address(request_with(website)) == ClientAddress("49.36.1.2", "website")
+    # A direct caller can no longer invent an address: the edge's word is used.
+    assert client_address(request_with(forged)) == ClientAddress("49.40.5.5", "cf-connecting-ip")
+
+
+async def test_whoami_tells_the_caller_their_own_address(api: AsyncClient) -> None:
+    response = await api.get("/health/whoami", headers={"X-Nf-Client-Connection-Ip": "49.36.1.2"})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ip": "49.36.1.2",
+        "source": "netlify",
+        "through_website": False,
+        "headers_present": ["x-nf-client-connection-ip"],
+        "forwarded_hops": 0,
+    }
+
+
+def test_admin_settings_answer_to_the_short_names(monkeypatch) -> None:
+    monkeypatch.delenv("FIRST_ADMIN_EMAIL", raising=False)
+    monkeypatch.setenv("ADMIN_EMAIL", "Harsh@Notchs.Test")
+    monkeypatch.setenv("ADMIN_NAME", "Harsh")
+    monkeypatch.setenv("ADMIN_PASSWORD", "a long first password")
+
+    fresh = type(settings)()
+
+    assert (fresh.FIRST_ADMIN_EMAIL, fresh.FIRST_ADMIN_NAME) == ("harsh@notchs.test", "Harsh")
+    assert fresh.FIRST_ADMIN_PASSWORD.get_secret_value() == "a long first password"
 
 
 @pytest.fixture

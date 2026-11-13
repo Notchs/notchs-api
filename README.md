@@ -319,7 +319,8 @@ They use the database and schema in `.env`. `create-admin` prints the set-passwo
 it unless `EMAIL_DRY_RUN=true`); `--role reviewer` makes a view-only admin.
 
 **An admin without a shell** (e.g. Render's free plan): set `FIRST_ADMIN_EMAIL`,
-`FIRST_ADMIN_NAME` and `FIRST_ADMIN_PASSWORD` (10+ characters) on the API and redeploy
+`FIRST_ADMIN_NAME` and `FIRST_ADMIN_PASSWORD` (10+ characters; `ADMIN_EMAIL`, `ADMIN_NAME` and
+`ADMIN_PASSWORD` work too) on the API and redeploy
 (`app/modules/admin_users/bootstrap.py`). If no admin has that email, one is created and can log
 in straight away; no email needs to arrive. Without the password it is emailed a set-password
 link instead. An admin who never set a password gets this one; an account that already has a
@@ -416,6 +417,11 @@ café, restaurant, bar, hotel, turf / box ground / gym, theatre, other.
   used. Because a direct caller could still invent a header, anything that guards an account is
   also counted per account: 20 wrong passwords for one account from anywhere lock it for 15
   minutes.
+- **The website's secret:** set the same long random value as `PROXY_SECRET` here and as
+  `API_PROXY_SECRET` on the website. The website then sends it with every API call, next to the
+  visitor's address, and the API believes that address only when the secret matches. A caller
+  who goes straight to the API can no longer invent an address. `GET /health/whoami` shows a
+  caller which address the limits use for them and where it came from.
 - **Body size:** more than `MAX_REQUEST_BODY_BYTES` (1 MB) is refused with `413`.
 - **Headers:** `X-Content-Type-Options: nosniff`, and `Cache-Control: no-store` unless the route
   sets its own, so a CDN can never store one person's data and serve it to another.

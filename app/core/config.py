@@ -6,7 +6,7 @@ from typing import Literal, Self
 from urllib.parse import parse_qsl, urlencode
 
 from cryptography.fernet import Fernet
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -126,9 +126,21 @@ class Settings(BaseSettings):
     # (admin_users/bootstrap.py). At startup, if no admin has this email, one is created.
     # With FIRST_ADMIN_PASSWORD it can log in straight away (no email needed); without it, it is
     # emailed a set-password link. An account that already has a password is never touched.
-    FIRST_ADMIN_EMAIL: str | None = None
-    FIRST_ADMIN_NAME: str = "Notchs admin"
-    FIRST_ADMIN_PASSWORD: SecretStr | None = None
+    # Each also answers to the shorter name (ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD).
+    FIRST_ADMIN_EMAIL: str | None = Field(
+        None, validation_alias=AliasChoices("FIRST_ADMIN_EMAIL", "ADMIN_EMAIL")
+    )
+    FIRST_ADMIN_NAME: str = Field(
+        "Notchs admin", validation_alias=AliasChoices("FIRST_ADMIN_NAME", "ADMIN_NAME")
+    )
+    FIRST_ADMIN_PASSWORD: SecretStr | None = Field(
+        None, validation_alias=AliasChoices("FIRST_ADMIN_PASSWORD", "ADMIN_PASSWORD")
+    )
+
+    # A secret shared with the website only (its API_PROXY_SECRET). The website sends it with
+    # every API call, next to the visitor's address; the API believes that address only when the
+    # secret matches (app/common/http.py). Unset: the website's word is not trusted.
+    PROXY_SECRET: SecretStr | None = None
     # Public https image sent with a stamp. Empty = the stamp is a text message.
     WHATSAPP_STAMP_IMAGE_URL: str | None = None
     # How often the API looks for incoming messages left unhandled (e.g. after a restart).

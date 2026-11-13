@@ -39,6 +39,9 @@ class SystemStatusOut(BaseSchema):
     whatsapp_webhook_ready: bool
     whatsapp_number_set: bool
     bot_check: BotCheckMode
+    # True when the website and the API share PROXY_SECRET, so a visitor's address (for rate
+    # limits) can't be made up.
+    proxy_secret_set: bool
     # Where links in emails and WhatsApp replies point.
     customer_app_url: str
     venue_app_url: str
@@ -88,6 +91,7 @@ def system_status() -> SystemStatusOut:
         ),
         whatsapp_number_set=bool(settings.WHATSAPP_PUBLIC_NUMBER),
         bot_check=bot_check,
+        proxy_secret_set=settings.PROXY_SECRET is not None,
         customer_app_url=settings.CUSTOMER_APP_URL,
         venue_app_url=settings.VENUE_APP_URL,
         admin_app_url=settings.ADMIN_APP_URL,
