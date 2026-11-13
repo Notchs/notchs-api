@@ -259,7 +259,7 @@ read them in Mailpit at http://localhost:8025 (`EMAIL_DRY_RUN=false`, `SMTP_HOST
 
 | Endpoint | Body | Notes |
 |---|---|---|
-| `POST /venue-applications/email/send-code` | `{email, turnstile_token}` | Emails a 6-digit code (10 minutes). One resend per minute. |
+| `POST /venue-applications/email/send-code` | `{email, turnstile_token}` | Emails a 6-digit code (10 minutes). One resend per minute. An email already in use gets no code: `409 applications.pending` (application under review) or `409 applications.email_registered` (has a venue login). After 5 such answers in an hour a connection gets `429 applications.check_rate_limited`. |
 | `POST /venue-applications/email/verify` | `{email, code}` | Returns `verification_token` (30 minutes). |
 | `POST /venue-applications` | the form + `verification_token` | `201 {application_code}`. Fields: `venue_name`, `category`, `city_id`, `google_maps_url`, `contact_name`, `phone`; optional `landmark`, `latitude` + `longitude`, `notes`. |
 

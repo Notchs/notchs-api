@@ -23,7 +23,10 @@ from app.modules.venue_applications import messages
 from app.modules.venue_applications.exceptions import (
     ApplicationCityInvalidException,
     ApplicationDuplicateException,
+    ApplicationPendingException,
     ApplicationRateLimitedException,
+    EmailCheckRateLimitedException,
+    EmailHasVenueLoginException,
     VerificationExpiredException,
 )
 from app.modules.venue_applications.models import (
@@ -34,6 +37,10 @@ from app.modules.venue_applications.schemas import ApplicationCreate
 from app.modules.venues.models import VenueMember
 
 MAX_APPLICATIONS_PER_IP_PER_DAY = 5
+# The email step says when an address is already taken (agreed by the team, 5 Nov 2026). This caps
+# how many such answers one connection gets, so it is slow to use for checking addresses.
+MAX_TAKEN_ANSWERS_PER_IP_PER_HOUR = 5
+TAKEN_ANSWERS_WINDOW_SECONDS = 60 * 60
 DAY = 24 * 60 * 60
 CODE_PURPOSE_TEXT = "verify your email for your Notchs venue application"
 
@@ -45,11 +52,13 @@ class VenueApplicationService:
         self.redis = redis
 
     async def send_code(self, email: str, *, ip: str | None) -> EmailMessage:
-        """Code for the application form. Sent whether or not the address is already in use,
-        so this cannot be used to find out who is registered (submit refuses duplicates)."""
+        """Code for the application form. An address that already has a pending application or a
+        venue login is told so here and gets no code: an exception to CLAUDE.md's generic-message
+        rule, agreed by the team on 5 Nov 2026. Submit still refuses duplicates as a safety net."""
         email = normalize_email(email)
         if is_disposable(email):
             raise EmailNotAllowedException()
+        await self._refuse_taken(email, ip=ip)
         code = await self.codes.issue(OtpPurpose.APPLICATION, email, ip=ip or "unknown")
         return auth_messages.email_code_email(to=email, code=code, purpose=CODE_PURPOSE_TEXT)
 
@@ -106,6 +115,31 @@ class VenueApplicationService:
             else None
         )
         return application, notice
+
+    async def _refuse_taken(self, email: str, *, ip: str | None) -> None:
+        """The limit is checked before looking the address up, so a 429 never says whether this
+        address is taken. Only "taken" answers count towards it."""
+        key = f"rl:apply:taken:ip:{ip or 'unknown'}"
+        if await rate_limit.is_limited(self.redis, key, limit=MAX_TAKEN_ANSWERS_PER_IP_PER_HOUR):
+            raise EmailCheckRateLimitedException()
+        pending = await self.session.scalar(
+            select(
+                exists().where(
+                    VenueApplication.email == email,
+                    VenueApplication.status.in_(OPEN_STATUSES),
+                )
+            )
+        )
+        member = await self.session.scalar(select(exists().where(VenueMember.email == email)))
+        if not (pending or member):
+            return
+        await rate_limit.hit(
+            self.redis,
+            key,
+            limit=MAX_TAKEN_ANSWERS_PER_IP_PER_HOUR,
+            window_seconds=TAKEN_ANSWERS_WINDOW_SECONDS,
+        )
+        raise EmailHasVenueLoginException() if member else ApplicationPendingException()
 
     async def _email_taken(self, email: str) -> bool:
         """A pending application or an existing venue login already uses this address."""

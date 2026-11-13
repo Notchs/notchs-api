@@ -15,6 +15,28 @@ class ApplicationDuplicateException(ConflictException):
     )
 
 
+class ApplicationPendingException(ConflictException):
+    """At the email step (team exception to CLAUDE.md's generic-message rule, 5 Nov 2026)."""
+
+    error_code = "applications.pending"
+    message = (
+        "This email already has an application waiting for review. "
+        "We'll email you once it's reviewed."
+    )
+
+
+class EmailHasVenueLoginException(ConflictException):
+    """At the email step (team exception to CLAUDE.md's generic-message rule, 5 Nov 2026)."""
+
+    error_code = "applications.email_registered"
+    message = "This email already has a Notchs venue login. Log in, or use Forgot password."
+
+
+class EmailCheckRateLimitedException(TooManyRequestsException):
+    error_code = "applications.check_rate_limited"
+    message = "Too many attempts from this connection. Please try again in an hour."
+
+
 class ApplicationNotFoundException(NotFoundException):
     error_code = "applications.not_found"
     message = "Application not found."
