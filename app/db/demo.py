@@ -10,9 +10,11 @@ and each says so in its `about` text. Without `--shared` it runs only on a local
 demo cafés there on 14 Nov 2026, so `--shared` must be asked for by name.
 """
 
+import random
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, make_url, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +30,9 @@ CITY_SLUG = "rajkot"
 SCAN_CODE_PREFIX = "DM"
 DEMO_NOTE = "Demo café for showing Notchs. Not a real place."
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "db", "postgres"}
+IST = ZoneInfo("Asia/Kolkata")
+# Demo cafés "joined" between 9 am and 9 pm on different days of last month.
+OPEN_HOUR, CLOSE_HOUR = 9, 21
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +110,22 @@ def scan_code(number: int, cafe: DemoCafe) -> str:
     return f"{SCAN_CODE_PREFIX}{number:02d}{slugify(cafe.name).replace('-', '')[:4].upper()}"
 
 
+def onboarding_times(now: datetime) -> list[datetime]:
+    """One different date and time last month (in India) per demo café, in CAFES order, so
+    nothing looks like it joined this month. Same answer for the same month."""
+    this_month = now.astimezone(IST).date().replace(day=1)
+    last_month = (this_month - timedelta(days=1)).replace(day=1)
+    days = (this_month - last_month).days
+    minutes_a_day = (CLOSE_HOUR - OPEN_HOUR) * 60
+    slots = random.Random(last_month.toordinal()).sample(range(days * minutes_a_day), len(CAFES))
+    times = []
+    for slot in slots:
+        day, minute = divmod(slot, minutes_a_day)
+        local = datetime.combine(last_month + timedelta(days=day), time(OPEN_HOUR), tzinfo=IST)
+        times.append((local + timedelta(minutes=minute)).astimezone(UTC))
+    return times
+
+
 async def _demo_venue_ids(session: AsyncSession) -> list[uuid.UUID]:
     rows = await session.scalars(
         select(Venue.id).where(Venue.scan_code.like(f"{SCAN_CODE_PREFIX}%"))
@@ -113,7 +134,8 @@ async def _demo_venue_ids(session: AsyncSession) -> list[uuid.UUID]:
 
 
 async def seed_demo(session: AsyncSession, *, now: datetime | None = None) -> int:
-    """Add the demo cafés that are not there yet. Returns how many were added."""
+    """Add the demo cafés that are not there yet, each "joined" last month (onboarding_times).
+    Returns how many were added."""
     city = await session.scalar(select(City).where(City.slug == CITY_SLUG))
     if city is None:
         raise LookupError("Rajkot is missing: run `python -m app.cli seed` first.")
@@ -123,13 +145,14 @@ async def seed_demo(session: AsyncSession, *, now: datetime | None = None) -> in
         )
     )
     areas = {a.slug: a for a in await session.scalars(select(Area).where(Area.city_id == city.id))}
-    now = now or datetime.now(UTC)
+    joined = onboarding_times(now or datetime.now(UTC))
     added = 0
     for number, cafe in enumerate(CAFES, start=1):
         code = scan_code(number, cafe)
         if code in existing:
             continue
         area = areas[cafe.area_slug]
+        at = joined[number - 1]
         session.add(
             Venue(
                 city_id=city.id,
@@ -143,13 +166,32 @@ async def seed_demo(session: AsyncSession, *, now: datetime | None = None) -> in
                 about=DEMO_NOTE,
                 price_range=cafe.price_range,
                 status=VenueStatus.COUNTER_LIVE,
-                signed_at=now,
-                live_at=now,
+                signed_at=at,
+                live_at=at,
+                created_at=at,
+                updated_at=at,
             )
         )
         added += 1
     await session.flush()
     return added
+
+
+async def redate_demo(session: AsyncSession, *, now: datetime | None = None) -> int:
+    """Move the demo cafés already there to their dates last month. Returns how many moved."""
+    joined = onboarding_times(now or datetime.now(UTC))
+    moved = 0
+    for number, cafe in enumerate(CAFES, start=1):
+        venue = await session.scalar(
+            select(Venue).where(Venue.scan_code == scan_code(number, cafe))
+        )
+        if venue is None:
+            continue
+        at = joined[number - 1]
+        venue.signed_at = venue.live_at = venue.created_at = at
+        moved += 1
+    await session.flush()
+    return moved
 
 
 async def remove_demo(session: AsyncSession) -> int:

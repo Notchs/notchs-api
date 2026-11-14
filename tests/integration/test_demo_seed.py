@@ -1,12 +1,23 @@
 """Demo cafés for pitches (app/db/demo.py): 30 made-up Rajkot cafés, never on the shared
 database, and removable without touching anything else."""
 
+from datetime import UTC, datetime
+
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.db.demo import CAFES, DemoNotAllowed, check_allowed, remove_demo, seed_demo
+from app.db.demo import (
+    CAFES,
+    IST,
+    DemoNotAllowed,
+    check_allowed,
+    onboarding_times,
+    redate_demo,
+    remove_demo,
+    seed_demo,
+)
 from app.db.seed import seed
 from app.modules.locations.models import Area, City, CityStatus
 from app.modules.scans.models import Visit
@@ -66,6 +77,31 @@ async def test_adds_only_the_missing_cafes(db: AsyncSession) -> None:
     assert await seed_demo(db) == 1
     total = select(func.count()).select_from(Venue).where(Venue.scan_code.like("DM%"))
     assert await db.scalar(total) == 30
+
+
+NOW = datetime(2026, 11, 14, 12, 0, tzinfo=UTC)
+
+
+def test_every_cafe_joined_on_a_different_day_and_time_last_month() -> None:
+    times = onboarding_times(NOW)
+    local = [t.astimezone(IST) for t in times]
+    assert len(set(times)) == len(CAFES)
+    assert all((t.year, t.month) == (2026, 10) and 9 <= t.hour < 21 for t in local)
+    assert onboarding_times(NOW) == times  # same answer within a month
+    january = [t.astimezone(IST) for t in onboarding_times(datetime(2027, 1, 3, tzinfo=UTC))]
+    assert all((t.year, t.month) == (2026, 12) for t in january)
+
+
+async def test_seeded_and_redated_cafes_use_those_times(db: AsyncSession) -> None:
+    await seed(db)
+    await seed_demo(db, now=NOW)
+    first = await db.scalar(select(Venue).where(Venue.scan_code.like("DM01%")))
+    expected = onboarding_times(NOW)[0]
+    assert first.signed_at == first.live_at == first.created_at == expected
+
+    first.signed_at = first.live_at = first.created_at = NOW
+    assert await redate_demo(db, now=NOW) == 30
+    assert first.signed_at == first.live_at == first.created_at == expected
 
 
 LOCAL = "postgresql+asyncpg://postgres@127.0.0.1:5432/notchs"

@@ -3,7 +3,7 @@
     python -m app.cli create-admin --email you@notchs.com --name "Your Name" [--role admin]
     python -m app.cli admin-link --email you@notchs.com     # new set-password link
     python -m app.cli seed                                  # cities + their areas, idempotent
-    python -m app.cli seed-demo [--remove] [--shared]       # made-up Rajkot cafés
+    python -m app.cli seed-demo [--remove|--redate] [--shared]  # made-up Rajkot cafés
     python -m app.cli rebuild-leaderboards                  # Redis ranks from the points ledger
 
 They use DATABASE_URL and DB_SCHEMA from .env, like the API. Links are printed and emailed
@@ -20,7 +20,14 @@ from app.clients.email import EmailClient
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.core.redis import redis_client
-from app.db.demo import DemoNotAllowed, check_allowed, is_shared, remove_demo, seed_demo
+from app.db.demo import (
+    DemoNotAllowed,
+    check_allowed,
+    is_shared,
+    redate_demo,
+    remove_demo,
+    seed_demo,
+)
 from app.db.seed import seed
 from app.db.session import AsyncSessionLocal, engine
 from app.modules.admin_users.models import AdminRole, AdminUser
@@ -72,7 +79,7 @@ async def run_seed() -> int:
     return 0
 
 
-async def run_seed_demo(remove: bool, shared: bool) -> int:
+async def run_seed_demo(remove: bool, shared: bool, redate: bool = False) -> int:
     try:
         check_allowed(settings, shared=shared)
     except DemoNotAllowed as exc:
@@ -84,6 +91,8 @@ async def run_seed_demo(remove: bool, shared: bool) -> int:
     async with AsyncSessionLocal() as session:
         if remove:
             print(f"Removed {await remove_demo(session)} demo cafés.")
+        elif redate:
+            print(f"Moved {await redate_demo(session)} demo cafés to joining dates last month.")
         else:
             await seed(session)
             added = await seed_demo(session)
@@ -123,6 +132,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     demo.add_argument("--remove", action="store_true", help="Delete the demo cafés")
     demo.add_argument(
+        "--redate", action="store_true", help="Move demo cafés to joining dates last month"
+    )
+    demo.add_argument(
         "--shared", action="store_true", help="Allow the shared database (team decision only)"
     )
     commands.add_parser("rebuild-leaderboards", help="Rebuild Redis ranks from the points ledger")
@@ -139,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.command == "rebuild-leaderboards":
                 return await rebuild_leaderboards()
             if args.command == "seed-demo":
-                return await run_seed_demo(args.remove, args.shared)
+                return await run_seed_demo(args.remove, args.shared, args.redate)
             return await run_seed()
         except ValueError as exc:  # e.g. a malformed email
             print(f"Error: {exc}")
