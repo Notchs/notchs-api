@@ -1,4 +1,4 @@
-"""Demo cafés for pitches (app/db/demo.py): 20 made-up Rajkot cafés, never on the shared
+"""Demo cafés for pitches (app/db/demo.py): 30 made-up Rajkot cafés, never on the shared
 database, and removable without touching anything else."""
 
 import pytest
@@ -23,16 +23,16 @@ async def test_rajkot_is_a_live_city_with_its_areas(db: AsyncSession) -> None:
     assert rajkot.status == CityStatus.LIVE and rajkot.state == "Gujarat" and areas == 12
 
 
-async def test_adds_twenty_cafes_once_and_nothing_else(db: AsyncSession) -> None:
+async def test_adds_thirty_cafes_once_and_nothing_else(db: AsyncSession) -> None:
     await seed(db)
     users_before = await db.scalar(select(func.count()).select_from(User))
 
-    assert await seed_demo(db) == len(CAFES) == 20
+    assert await seed_demo(db) == len(CAFES) == 30
     assert await seed_demo(db) == 0  # already there
 
     rajkot = await db.scalar(select(City).where(City.slug == "rajkot"))
     venues = list(await db.scalars(select(Venue).where(Venue.scan_code.like("DM%"))))
-    assert len(venues) == 20 and len({v.slug for v in venues}) == 20
+    assert len(venues) == 30 and len({v.slug for v in venues}) == 30
     assert all(v.city_id == rajkot.id and v.area_id is not None for v in venues)
     assert all(v.price_range in (1, 2) and v.status == VenueStatus.COUNTER_LIVE for v in venues)
     # Cafés only: no customers, visits or logins made up.
@@ -47,13 +47,25 @@ async def test_remove_takes_out_only_the_demo_cafes(db: AsyncSession) -> None:
     db.add(real)
     await seed_demo(db)
 
-    assert await remove_demo(db) == 20
+    assert await remove_demo(db) == 30
     assert (
         await db.scalar(select(func.count()).select_from(Venue).where(Venue.scan_code.like("DM%")))
         == 0
     )
     assert await db.get(Venue, real.id) is not None
     assert await remove_demo(db) == 0
+
+
+async def test_adds_only_the_missing_cafes(db: AsyncSession) -> None:
+    await seed(db)
+    await seed_demo(db)
+    one = await db.scalar(select(Venue).where(Venue.scan_code.like("DM30%")))
+    await db.delete(one)
+    await db.flush()
+
+    assert await seed_demo(db) == 1
+    total = select(func.count()).select_from(Venue).where(Venue.scan_code.like("DM%"))
+    assert await db.scalar(total) == 30
 
 
 LOCAL = "postgresql+asyncpg://postgres@127.0.0.1:5432/notchs"

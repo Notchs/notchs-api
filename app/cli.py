@@ -90,7 +90,7 @@ async def run_seed_demo(remove: bool, shared: bool) -> int:
             print(
                 f"Added {added} demo cafés in Rajkot."
                 if added
-                else "The demo cafés are already there (--remove takes them out)."
+                else "All demo cafés are already there (--remove takes them out)."
             )
         await session.commit()
     return 0

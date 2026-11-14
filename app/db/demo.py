@@ -1,13 +1,13 @@
-"""Demo cafés for pitching to venue owners: 20 made-up cafés in Rajkot, no customers or visits.
+"""Demo cafés for pitching to venue owners: 30 made-up cafés in Rajkot, no customers or visits.
 
-    python -m app.cli seed-demo            # add them (does nothing if they are already there)
+    python -m app.cli seed-demo            # add the ones not there yet
     python -m app.cli seed-demo --remove   # take them out again
     python -m app.cli seed-demo --shared   # on the shared database (team decision, 14 Nov 2026)
 
 The cafés are invented, never real places, so no real business is listed as if it had joined,
 and each says so in its `about` text. Without `--shared` it runs only on a local database or a
 `dev_<name>` schema. CLAUDE.md §4 keeps made-up data out of `public`; the team agreed to these
-20 demo cafés there on 14 Nov 2026, so `--shared` must be asked for by name.
+demo cafés there on 14 Nov 2026, so `--shared` must be asked for by name.
 """
 
 import uuid
@@ -59,6 +59,16 @@ CAFES = (
     DemoCafe("Oak & Elaichi", "amin-marg", 2, "Cardamom cappuccino and cake."),
     DemoCafe("Second Shift Café", "kalawad-road", 1, "Opens after college, closes late."),
     DemoCafe("Tapri Studio", "yagnik-road", 1, "Chai, music nights and open mics."),
+    DemoCafe("Masala Mug", "mavdi", 1, "Masala chai in big mugs, evening crowd."),
+    DemoCafe("Bun Maska Bureau", "university-road", 1, "Bun maska, cutting chai and exam talk."),
+    DemoCafe("Green Door Café", "nana-mava", 2, "Plants, pour-overs and slow afternoons."),
+    DemoCafe("Cutting & Co.", "kotecha-chowk", 1, "Cutting chai and quick bites."),
+    DemoCafe("Rangilo Roast", "gondal-road", 2, "Bright cups and Gujarati snacks."),
+    DemoCafe("Half Moon Café", "indira-circle", 2, "Cold coffee and late-night fries."),
+    DemoCafe("Lime Tree Café", "race-course", 2, "Lemon iced tea under the trees."),
+    DemoCafe("Kadak Corner", "raiya-road", 1, "Strong chai, open early."),
+    DemoCafe("Sunday Sip", "amin-marg", 2, "Brunch plates and frappés."),
+    DemoCafe("Station Brew", "yagnik-road", 1, "Quick coffee on the way to work."),
 )
 
 
@@ -90,6 +100,11 @@ def slugify(name: str) -> str:
     return "-".join("".join(c if c.isalnum() else " " for c in text).split())
 
 
+def scan_code(number: int, cafe: DemoCafe) -> str:
+    """'DM01BREW': the DM prefix marks demo cafés; the number keeps every code unique."""
+    return f"{SCAN_CODE_PREFIX}{number:02d}{slugify(cafe.name).replace('-', '')[:4].upper()}"
+
+
 async def _demo_venue_ids(session: AsyncSession) -> list[uuid.UUID]:
     rows = await session.scalars(
         select(Venue.id).where(Venue.scan_code.like(f"{SCAN_CODE_PREFIX}%"))
@@ -98,25 +113,31 @@ async def _demo_venue_ids(session: AsyncSession) -> list[uuid.UUID]:
 
 
 async def seed_demo(session: AsyncSession, *, now: datetime | None = None) -> int:
-    """Add the demo cafés. Returns how many were added (0 when they are already there)."""
-    if await _demo_venue_ids(session):
-        return 0
+    """Add the demo cafés that are not there yet. Returns how many were added."""
     city = await session.scalar(select(City).where(City.slug == CITY_SLUG))
     if city is None:
         raise LookupError("Rajkot is missing: run `python -m app.cli seed` first.")
+    existing = set(
+        await session.scalars(
+            select(Venue.scan_code).where(Venue.scan_code.like(f"{SCAN_CODE_PREFIX}%"))
+        )
+    )
     areas = {a.slug: a for a in await session.scalars(select(Area).where(Area.city_id == city.id))}
     now = now or datetime.now(UTC)
-    for i, cafe in enumerate(CAFES, start=1):
+    added = 0
+    for number, cafe in enumerate(CAFES, start=1):
+        code = scan_code(number, cafe)
+        if code in existing:
+            continue
         area = areas[cafe.area_slug]
-        slug = slugify(cafe.name)
         session.add(
             Venue(
                 city_id=city.id,
                 area_id=area.id,
                 name=cafe.name,
-                slug=slug,
+                slug=slugify(cafe.name),
                 category=VenueCategory.CAFE,
-                scan_code=f"{SCAN_CODE_PREFIX}{i:02d}{slug.replace('-', '')[:4].upper()}",
+                scan_code=code,
                 address=f"{area.name}, Rajkot",
                 description=cafe.description,
                 about=DEMO_NOTE,
@@ -126,8 +147,9 @@ async def seed_demo(session: AsyncSession, *, now: datetime | None = None) -> in
                 live_at=now,
             )
         )
+        added += 1
     await session.flush()
-    return len(CAFES)
+    return added
 
 
 async def remove_demo(session: AsyncSession) -> int:
