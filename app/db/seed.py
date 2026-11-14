@@ -38,6 +38,25 @@ CITIES = (
             ("Vastrapur", "vastrapur"),
         ),
     ),
+    SeedCity(
+        name="Rajkot",
+        slug="rajkot",
+        state="Gujarat",
+        areas=(
+            ("150 Feet Ring Road", "150-feet-ring-road"),
+            ("Amin Marg", "amin-marg"),
+            ("Gondal Road", "gondal-road"),
+            ("Indira Circle", "indira-circle"),
+            ("Kalawad Road", "kalawad-road"),
+            ("Kotecha Chowk", "kotecha-chowk"),
+            ("Mavdi", "mavdi"),
+            ("Nana Mava", "nana-mava"),
+            ("Race Course", "race-course"),
+            ("Raiya Road", "raiya-road"),
+            ("University Road", "university-road"),
+            ("Yagnik Road", "yagnik-road"),
+        ),
+    ),
 )
 
 

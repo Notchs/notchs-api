@@ -2,7 +2,8 @@
 
     python -m app.cli create-admin --email you@notchs.com --name "Your Name" [--role admin]
     python -m app.cli admin-link --email you@notchs.com     # new set-password link
-    python -m app.cli seed                                  # Ahmedabad + its areas, idempotent
+    python -m app.cli seed                                  # cities + their areas, idempotent
+    python -m app.cli seed-demo [--remove]                  # made-up Rajkot cafés (dev only)
     python -m app.cli rebuild-leaderboards                  # Redis ranks from the points ledger
 
 They use DATABASE_URL and DB_SCHEMA from .env, like the API. Links are printed and emailed
@@ -16,8 +17,10 @@ import sys
 from sqlalchemy import select
 
 from app.clients.email import EmailClient
+from app.core.config import settings
 from app.core.logging import setup_logging
 from app.core.redis import redis_client
+from app.db.demo import DemoNotAllowed, check_allowed, remove_demo, seed_demo
 from app.db.seed import seed
 from app.db.session import AsyncSessionLocal, engine
 from app.modules.admin_users.models import AdminRole, AdminUser
@@ -65,7 +68,28 @@ async def run_seed() -> int:
     async with AsyncSessionLocal() as session:
         counts = await seed(session)
         await session.commit()
-    print(f"Seeded {counts['cities']} city and {counts['areas']} areas (safe to run again).")
+    print(f"Seeded {counts['cities']} cities and {counts['areas']} areas (safe to run again).")
+    return 0
+
+
+async def run_seed_demo(remove: bool) -> int:
+    try:
+        check_allowed(settings)
+    except DemoNotAllowed as exc:
+        print(f"Refused: {exc}")
+        return 1
+    async with AsyncSessionLocal() as session:
+        if remove:
+            print(f"Removed {await remove_demo(session)} demo cafés.")
+        else:
+            await seed(session)
+            added = await seed_demo(session)
+            print(
+                f"Added {added} demo cafés in Rajkot."
+                if added
+                else "The demo cafés are already there (--remove takes them out)."
+            )
+        await session.commit()
     return 0
 
 
@@ -90,7 +114,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     link = commands.add_parser("admin-link", help="Send an existing admin a new set-password link")
     link.add_argument("--email", required=True)
-    commands.add_parser("seed", help="Add Ahmedabad and its areas (safe to repeat)")
+    commands.add_parser("seed", help="Add the cities and their areas (safe to repeat)")
+    demo = commands.add_parser(
+        "seed-demo", help="Made-up Rajkot cafés for demos (local or dev_ schema only)"
+    )
+    demo.add_argument("--remove", action="store_true", help="Delete the demo cafés")
     commands.add_parser("rebuild-leaderboards", help="Rebuild Redis ranks from the points ledger")
 
     args = parser.parse_args(argv)
@@ -104,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
                 return await admin_link(args.email)
             if args.command == "rebuild-leaderboards":
                 return await rebuild_leaderboards()
+            if args.command == "seed-demo":
+                return await run_seed_demo(args.remove)
             return await run_seed()
         except ValueError as exc:  # e.g. a malformed email
             print(f"Error: {exc}")
