@@ -2,10 +2,12 @@
 
     python -m app.cli seed-demo            # add them (does nothing if they are already there)
     python -m app.cli seed-demo --remove   # take them out again
+    python -m app.cli seed-demo --shared   # on the shared database (team decision, 14 Nov 2026)
 
-The cafés are invented, never real places, so no real business is listed as if it had joined.
-Runs only on a local database or a `dev_<name>` schema, never on the shared `public` schema
-behind the live site (CLAUDE.md §4: real data only in `public`).
+The cafés are invented, never real places, so no real business is listed as if it had joined,
+and each says so in its `about` text. Without `--shared` it runs only on a local database or a
+`dev_<name>` schema. CLAUDE.md §4 keeps made-up data out of `public`; the team agreed to these
+20 demo cafés there on 14 Nov 2026, so `--shared` must be asked for by name.
 """
 
 import uuid
@@ -64,14 +66,21 @@ class DemoNotAllowed(Exception):
     """The database is the shared one behind the live site, or the app runs as staging/prod."""
 
 
-def check_allowed(settings: Settings) -> None:
-    """Demo data only on a local database or a `dev_<name>` schema (CLAUDE.md §4)."""
-    if settings.ENVIRONMENT in ("staging", "production"):
-        raise DemoNotAllowed(f"ENVIRONMENT is {settings.ENVIRONMENT}: demo data is local only.")
+def is_shared(settings: Settings) -> bool:
+    """True for a non-local database outside a `dev_<name>` schema: the one behind the site."""
     host = make_url(settings.DATABASE_URL).host or ""
-    if not settings.DB_SCHEMA.startswith("dev_") and host not in LOCAL_HOSTS:
+    return not settings.DB_SCHEMA.startswith("dev_") and host not in LOCAL_HOSTS
+
+
+def check_allowed(settings: Settings, *, shared: bool = False) -> None:
+    """Never from a deployed server. On the shared database only when `shared` is asked for
+    (CLAUDE.md §4; the team agreed to the demo cafés there on 14 Nov 2026)."""
+    if settings.ENVIRONMENT in ("staging", "production"):
+        raise DemoNotAllowed(f"ENVIRONMENT is {settings.ENVIRONMENT}: run it from your machine.")
+    if is_shared(settings) and not shared:
         raise DemoNotAllowed(
-            f"DB_SCHEMA is {settings.DB_SCHEMA} on a shared database. Use a dev_<name> schema."
+            f"DB_SCHEMA is {settings.DB_SCHEMA} on a shared database. "
+            "Add --shared only if the team agreed to demo cafés there."
         )
 
 

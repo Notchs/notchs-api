@@ -72,7 +72,7 @@ NEON = "postgresql+asyncpg://u@ep-x.neon.tech/neondb"
         (NEON, "dev_harsh", "production", False),
     ],
 )
-def test_never_on_the_shared_database(
+def test_never_on_the_shared_database_unless_asked(
     url: str, schema: str, environment: str, allowed: bool
 ) -> None:
     settings = Settings.model_construct(DATABASE_URL=url, DB_SCHEMA=schema, ENVIRONMENT=environment)
@@ -81,3 +81,14 @@ def test_never_on_the_shared_database(
     else:
         with pytest.raises(DemoNotAllowed):
             check_allowed(settings)
+
+
+def test_shared_only_by_name_and_never_from_a_server() -> None:
+    shared = Settings.model_construct(DATABASE_URL=NEON, DB_SCHEMA="public", ENVIRONMENT="local")
+    check_allowed(shared, shared=True)
+    for environment in ("staging", "production"):
+        server = Settings.model_construct(
+            DATABASE_URL=NEON, DB_SCHEMA="public", ENVIRONMENT=environment
+        )
+        with pytest.raises(DemoNotAllowed):
+            check_allowed(server, shared=True)
