@@ -66,7 +66,9 @@ async def test_me_after_a_scan(api: AsyncClient, db, redis, bot_under_test) -> N
     assert data["totals"] == {"notches": 1, "places": 1, "points": 12}
     assert data["city"]["id"] == str(venue.city_id)
     assert data["is_public"] is False and data["show_instagram_to_venues"] is False
-    assert user.phone_e164 not in str(data)
+    # Their own number, only in their own profile (team decision, 18 Nov 2026).
+    assert data["phone"] == user.phone_e164
+    assert str(data).count(user.phone_e164) == 1
 
 
 async def test_update_name_area_theme_and_instagram(api: AsyncClient, db, redis) -> None:

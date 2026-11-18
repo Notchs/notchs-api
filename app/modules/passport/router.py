@@ -5,8 +5,9 @@ Rank and leaderboard visibility stay in `/leaderboards/me`.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 
+from app.clients.storage import PhotoStorage, get_photo_storage
 from app.common.dependencies import DBSession, RedisClient
 from app.common.schemas import CustomResponse, PaginatedResponse
 from app.modules.auth.cookies import clear_session_cookies
@@ -14,6 +15,8 @@ from app.modules.auth.dependencies import CurrentUser
 from app.modules.auth.enums import SubjectType
 from app.modules.passport.exceptions import PhoneChangeRateLimitedException
 from app.modules.passport.schemas import (
+    CategoryPlacesOut,
+    CityNotchsOut,
     DeleteMeIn,
     MeOut,
     MeUpdate,
@@ -24,12 +27,17 @@ from app.modules.passport.schemas import (
 from app.modules.passport.service import PassportService
 from app.modules.users.deletion import delete_customer
 from app.modules.users.phone_change import COMMAND, PhoneChangeService
+from app.modules.users.photos import MAX_UPLOAD_BYTES
 
 router = APIRouter(prefix="/me", tags=["Passport"])
 
 
-def get_passport_service(session: DBSession) -> PassportService:
-    return PassportService(session)
+def get_passport_service(
+    session: DBSession,
+    redis: RedisClient,
+    storage: Annotated[PhotoStorage, Depends(get_photo_storage)],
+) -> PassportService:
+    return PassportService(session, storage, redis)
 
 
 PassportDep = Annotated[PassportService, Depends(get_passport_service)]
@@ -43,7 +51,7 @@ async def me(user: CurrentUser, passport: PassportDep) -> CustomResponse[MeOut]:
 @router.patch(
     "",
     response_model=CustomResponse[MeOut],
-    summary="Change my name, area, theme or Instagram (and whether venues see it)",
+    summary="Change my name, area, theme, Instagram (and whether venues see it) or date of birth",
 )
 async def update_me(
     body: MeUpdate, user: CurrentUser, passport: PassportDep
@@ -63,6 +71,48 @@ async def notches(
     size: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> CustomResponse[PaginatedResponse[NotchOut]]:
     return CustomResponse(message="OK", data=await passport.notches(user, page, size))
+
+
+@router.get(
+    "/places",
+    response_model=CustomResponse[list[CategoryPlacesOut]],
+    summary="Places I've visited, by kind (cafés, restaurants, turfs...)",
+)
+async def places(
+    user: CurrentUser, passport: PassportDep
+) -> CustomResponse[list[CategoryPlacesOut]]:
+    return CustomResponse(message="OK", data=await passport.places(user))
+
+
+@router.get(
+    "/notches/by-location",
+    response_model=CustomResponse[list[CityNotchsOut]],
+    summary="My Notchs by city and area",
+)
+async def notches_by_location(
+    user: CurrentUser, passport: PassportDep
+) -> CustomResponse[list[CityNotchsOut]]:
+    return CustomResponse(message="OK", data=await passport.notchs_by_location(user))
+
+
+@router.put(
+    "/photo",
+    response_model=CustomResponse[MeOut],
+    summary="Upload or replace my profile picture (JPG, PNG or WebP, up to 5 MB)",
+)
+async def set_photo(
+    user: CurrentUser,
+    passport: PassportDep,
+    photo: Annotated[UploadFile, File(description="The picture")],
+) -> CustomResponse[MeOut]:
+    # Never more than one byte past the limit is read, whatever the client sends.
+    data = await photo.read(MAX_UPLOAD_BYTES + 1)
+    return CustomResponse(message="Saved.", data=await passport.set_photo(user, data))
+
+
+@router.delete("/photo", response_model=CustomResponse[MeOut], summary="Remove my profile picture")
+async def remove_photo(user: CurrentUser, passport: PassportDep) -> CustomResponse[MeOut]:
+    return CustomResponse(message="Removed.", data=await passport.remove_photo(user))
 
 
 @router.get(

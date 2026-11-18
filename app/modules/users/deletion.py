@@ -1,6 +1,7 @@
 """Deleting a customer's account, for good (team decision: deletion is permanent; DPDP).
 
-Everything that says who they are goes: phone number, name, Instagram, area, consent, logins,
+Everything that says who they are goes: phone number, name, Instagram, area, date of birth,
+profile picture (also deleted from storage), consent, logins,
 bill-photo claims, invites and Star Points, and the number, text and raw data of every WhatsApp
 message to or from them.
 
@@ -18,6 +19,7 @@ from redis.exceptions import RedisError
 from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.clients.storage import PhotoStorage, StorageError, get_photo_storage
 from app.core.logging import get_logger
 from app.modules.auth.models import AuthToken
 from app.modules.claims.models import VisitClaim
@@ -35,10 +37,16 @@ CONFIRM_WORD = "DELETE"
 
 
 async def delete_customer(
-    session: AsyncSession, redis: Redis, user_id: uuid.UUID, *, now: datetime | None = None
+    session: AsyncSession,
+    redis: Redis,
+    user_id: uuid.UUID,
+    *,
+    now: datetime | None = None,
+    storage: PhotoStorage | None = None,
 ) -> bool:
     """Wipe the customer and commit. False if they were already deleted."""
     now = now or datetime.now(UTC)
+    storage = storage or get_photo_storage()
     user = await session.scalar(
         select(User)
         .where(User.id == user_id)
@@ -48,6 +56,7 @@ async def delete_customer(
     if user is None or user.deleted_at is not None:
         return False
     phone = user.phone_e164
+    photo = user.photo_s3_key
 
     await session.execute(delete(AuthToken).where(AuthToken.user_id == user.id))
     await delete_user_consents(session, user.id)
@@ -74,6 +83,8 @@ async def delete_customer(
     user.is_public = False
     user.area_id = None
     user.age_confirmed_at = None
+    user.birth_date = None
+    user.photo_s3_key = None
     user.consent_at = None
     user.consent_version = None
     user.last_seen_at = None
@@ -82,6 +93,13 @@ async def delete_customer(
     user.deleted_at = now
     await session.commit()
     logger.info("Customer %s deleted their account", user.id)
+
+    # The picture goes too. The account no longer points to it, so a failure is only logged.
+    if photo and storage.configured:
+        try:
+            await storage.delete(photo)
+        except StorageError:
+            logger.warning("Customer %s: photo file left in storage, delete it by hand", user.id)
 
     # Off the leaderboards now; the next rebuild would drop them anyway.
     try:

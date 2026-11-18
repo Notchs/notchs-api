@@ -101,6 +101,13 @@ class Settings(BaseSettings):
     TURNSTILE_SECRET: SecretStr | None = None
     TURNSTILE_DISABLED: bool = False
 
+    # S3 bucket for uploads (customer profile pictures). Private bucket; links are signed and
+    # short-lived. Without a bucket and keys, uploads answer "not set up yet".
+    AWS_S3_BUCKET: str | None = None
+    AWS_REGION: str = "ap-south-1"
+    AWS_ACCESS_KEY_ID: str | None = None
+    AWS_SECRET_ACCESS_KEY: SecretStr | None = None
+
     # WhatsApp Cloud API (Meta). With WHATSAPP_DRY_RUN=true nothing is sent: replies go to the log.
     WHATSAPP_DRY_RUN: bool = True
     WHATSAPP_PHONE_NUMBER_ID: str | None = None
@@ -121,6 +128,8 @@ class Settings(BaseSettings):
     GLOBAL_RATE_LIMIT_PER_MINUTE: int = 600
     # The largest request body the API reads (the WhatsApp webhook has its own limit).
     MAX_REQUEST_BODY_BYTES: int = 1_000_000
+    # Profile picture uploads only (PUT /me/photo): a 5 MB picture plus the form around it.
+    MAX_UPLOAD_BODY_BYTES: int = 6_000_000
 
     # An admin made from settings, for a deploy with no shell to run `create-admin`
     # (admin_users/bootstrap.py). At startup, if no admin has this email, one is created.

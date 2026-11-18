@@ -27,6 +27,7 @@ class ConsentSubject(StrEnum):
 class ConsentPurpose(StrEnum):
     PRIVACY_NOTICE = "privacy_notice"  # customers: the notice and 18+
     VENUE_APPLICATION_PRIVACY = "venue_application_privacy"
+    BIRTHDAY = "birthday"  # customers: their date of birth, for birthday treats and age range
 
 
 class ConsentChannel(StrEnum):

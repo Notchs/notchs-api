@@ -1,10 +1,19 @@
 """Customers. Their WhatsApp phone number is the identity; they have no password."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, false
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    false,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Entity, in_values
@@ -51,6 +60,7 @@ class User(Entity):
         CheckConstraint(
             "status = 'blocked' OR blocked_at IS NULL", name="blocked_at_only_when_blocked"
         ),
+        CheckConstraint("birth_date >= DATE '1900-01-01'", name="birth_date_range"),
     )
 
     # Login identity, e.g. +919876543210. Never shown to venues. None once deleted.
@@ -94,3 +104,9 @@ class User(Entity):
     # stays in audit_logs. Never shown to venues.
     blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     blocked_reason: Mapped[str | None] = mapped_column(String(200))
+    # Profile picture: S3 object key (never a URL; links are signed and short-lived). Removed
+    # with the account.
+    photo_s3_key: Mapped[str | None] = mapped_column(String(255))
+    # Optional, added by the customer for birthday treats and their age range (worked out, not
+    # stored). Saving it records a `consents` row (purpose `birthday`). 18+ is checked on save.
+    birth_date: Mapped[date | None] = mapped_column(Date)

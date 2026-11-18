@@ -62,3 +62,9 @@ class TooManyRequestsException(AppException):
     status_code = status.HTTP_429_TOO_MANY_REQUESTS
     error_code = "rate_limited"
     message = "Too many requests. Please try again later."
+
+
+class ServiceUnavailableException(AppException):
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    error_code = "service_unavailable"
+    message = "This isn't available right now. Please try again later."

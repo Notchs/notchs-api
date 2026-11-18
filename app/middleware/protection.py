@@ -1,6 +1,7 @@
 """Protection applied to every request, before any route runs.
 
-    body size     a request that declares a body over MAX_REQUEST_BODY_BYTES gets 413
+    body size     a request that declares a body over MAX_REQUEST_BODY_BYTES gets 413 (uploads:
+                  MAX_UPLOAD_BODY_BYTES)
     global limit  one visitor (IP) gets GLOBAL_RATE_LIMIT_PER_MINUTE requests a minute over the
                   whole API, then 429 until the minute ends. Health checks and Meta's webhook
                   are never counted. If Redis is down the limit is skipped, not the request.
@@ -38,6 +39,10 @@ def _error(status: int, code: str, message: str, headers: dict[str, str] | None 
     return JSONResponse(body, status_code=status, headers=headers)
 
 
+# Uploads may be larger than other requests (settings.MAX_UPLOAD_BODY_BYTES).
+UPLOAD_PATHS = frozenset({f"{settings.API_V1_PREFIX}/me/photo"})
+
+
 class ProtectionMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -49,7 +54,12 @@ class ProtectionMiddleware:
         request = Request(scope)
 
         declared = request.headers.get("content-length", "")
-        if declared.isdigit() and int(declared) > settings.MAX_REQUEST_BODY_BYTES:
+        limit = (
+            settings.MAX_UPLOAD_BODY_BYTES
+            if request.url.path in UPLOAD_PATHS
+            else settings.MAX_REQUEST_BODY_BYTES
+        )
+        if declared.isdigit() and int(declared) > limit:
             response = _error(413, "request_too_large", "That request is too large.")
             await response(scope, receive, send)
             return
