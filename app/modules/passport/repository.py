@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import Row, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.locations.models import Area
+from app.modules.locations.models import Area, City
 from app.modules.scans.models import PointsEntry, Visit, VisitStatus
 from app.modules.venues.models import Venue
 
@@ -100,3 +100,58 @@ class PassportRepository:
         if city_id is not None:
             query = query.where(Area.city_id == city_id)
         return await self.session.scalar(query)
+
+    async def visited_places(self, user_id: uuid.UUID) -> Sequence[Row[Any]]:
+        """Every place with a counted Notch: its kind at the time of the visits (`visits.niche`),
+        how often, and first and last day. Most visited first."""
+        visits = func.count(Visit.id)
+        return (
+            await self.session.execute(
+                select(
+                    Visit.niche,
+                    Venue.venue_code,
+                    Venue.name.label("venue_name"),
+                    Area.name.label("area"),
+                    City.name.label("city"),
+                    visits.label("visits"),
+                    func.min(Visit.visit_date).label("first_visit"),
+                    func.max(Visit.visit_date).label("last_visit"),
+                )
+                .join(Venue, Venue.id == Visit.venue_id)
+                .join(City, City.id == Venue.city_id)
+                .outerjoin(Area, Area.id == Venue.area_id)
+                .where(Visit.user_id == user_id, _COUNTED)
+                .group_by(Visit.niche, Venue.id, Area.name, City.name)
+                .order_by(visits.desc(), func.max(Visit.visit_date).desc(), Venue.name)
+            )
+        ).all()
+
+    async def notchs_by_area(self, user_id: uuid.UUID) -> Sequence[Row[Any]]:
+        """Counted Notchs and places per city and area (where the venue is)."""
+        return (
+            await self.session.execute(
+                select(
+                    City.id.label("city_id"),
+                    City.name.label("city_name"),
+                    Area.id.label("area_id"),
+                    Area.name.label("area_name"),
+                    func.count(Visit.id).label("notchs"),
+                    func.count(distinct(Visit.venue_id)).label("places"),
+                )
+                .join(Venue, Venue.id == Visit.venue_id)
+                .join(City, City.id == Venue.city_id)
+                .outerjoin(Area, Area.id == Venue.area_id)
+                .where(Visit.user_id == user_id, _COUNTED)
+                .group_by(City.id, City.name, Area.id, Area.name)
+            )
+        ).all()
+
+    async def places_per_city(self, user_id: uuid.UUID) -> dict[uuid.UUID, int]:
+        """Different places per city (a place counts once even with visits on many days)."""
+        rows = await self.session.execute(
+            select(Venue.city_id, func.count(distinct(Visit.venue_id)))
+            .join(Venue, Venue.id == Visit.venue_id)
+            .where(Visit.user_id == user_id, _COUNTED)
+            .group_by(Venue.city_id)
+        )
+        return dict(rows.tuples().all())

@@ -439,6 +439,25 @@ seconds with every message handled and no over-counting. For real traffic, raise
 and `DB_MAX_OVERFLOW` (and use the database's pooler, `DB_USE_POOLER=true`), and run on a
 plan that doesn't sleep.
 
+## Customer profile (passport)
+
+Logged-in customers (`nx_user_*` cookies) only, and only their own data.
+
+| Endpoint | Notes |
+|---|---|
+| `GET /me` | Profile and totals. Includes their **own phone number in full** (only here, never to venues or lists; team decision 18 Nov 2026), `photo_url` (a signed link that works 15 minutes), and `age`: `birth_date`, `age_range` (18-24, 25-34, 35-44, 45+, worked out, never stored), when they confirmed 18+, and the consent words to show next to the date field |
+| `PATCH /me` | Name, area, theme, Instagram, show-Instagram-to-venues, `birth_date` (`null` removes it). A date must make them 18+. Saving the first date records a `consents` row (purpose `birthday`, exact words); removing it withdraws that consent |
+| `GET /me/places` | Places visited by kind (cafés, restaurants, turfs...): each place with visits and first and last day. Counted Notchs only |
+| `GET /me/notches/by-location` | Notchs and places per city, then per area |
+| `PUT /me/photo` | Multipart field `photo`: JPG, PNG or WebP up to 5 MB. Checked, all metadata (GPS) removed, cropped square, 512 px WebP, stored in the private S3 bucket. 10 an hour |
+| `DELETE /me/photo` | Removes the picture (and its file) |
+| `POST /me/phone-change` | A code to send from the new number on WhatsApp (see the WhatsApp table) |
+
+Pictures need `AWS_S3_BUCKET`, `AWS_REGION`, `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+(a private bucket; the keys' IAM user may only put, get and delete objects in it). Without
+them uploads answer `503 passport.photo_storage_not_configured` and profiles show no photo.
+Birthday treats never use WhatsApp messages we start (paid templates are not allowed).
+
 ## Deleting an account
 
 A customer deletes their account from the passport (`POST /me/delete` with `{"confirm": "DELETE"}`),
@@ -446,7 +465,8 @@ or an admin does it when they ask support (`POST /admin/customers/{handle}/delet
 typed again; `admin` role). It is permanent (team decision) and happens at once
 (`app/modules/users/deletion.py`):
 
-- **Deleted:** phone number, name, Instagram, area, consent (and its stored wording), logins, bill-photo claims, invites and
+- **Deleted:** phone number, name, Instagram, area, date of birth, profile picture (also from
+  storage), consent (and its stored wording), logins, bill-photo claims, invites and
   their Star Points, and the number, text and raw data of every WhatsApp message to or from them.
 - **Kept, anonymous (team decision):** their visits and points, so venues' past totals don't change.
   The account row stays as an empty shell (status `deleted`, random handle, no number). It is never

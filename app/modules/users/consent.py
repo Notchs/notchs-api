@@ -16,3 +16,13 @@ def consent_text() -> str:
         f"is private unless you make it public. Privacy notice: {settings.CUSTOMER_APP_URL}/privacy"
         "\n\nTap below to confirm you agree and are 18 or over."
     )
+
+
+# DRAFT, team to approve. Shown on the website next to the date-of-birth field; the exact words
+# are stored in `consents` (purpose `birthday`) when the customer saves a date of birth. Change
+# the version whenever the wording changes.
+BIRTHDAY_CONSENT_VERSION = "draft-2026-11"
+BIRTHDAY_CONSENT_TEXT = (
+    "We use your birthday to give you birthday treats at Notchs places and to show your age "
+    "range. You can remove it anytime."
+)

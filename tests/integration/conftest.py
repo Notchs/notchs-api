@@ -18,6 +18,7 @@ from sqlalchemy import make_url, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.clients.email import EmailMessage, get_email_client
+from app.clients.storage import StorageError, get_photo_storage
 from app.clients.turnstile import get_turnstile_client
 from app.core.config import settings
 from app.core.redis import get_redis
@@ -107,6 +108,28 @@ class Outbox:
         self.sent.append(message)
 
 
+class FakeStorage:
+    """Stands in for the S3 bucket: keeps files in memory. `configured` can be switched off."""
+
+    def __init__(self) -> None:
+        self.configured = True
+        self.files: dict[str, bytes] = {}
+        self.fail = False
+
+    async def put(self, key: str, data: bytes, content_type: str) -> None:
+        if self.fail:
+            raise StorageError("put_object")
+        self.files[key] = data
+
+    async def delete(self, key: str) -> None:
+        if self.fail:
+            raise StorageError("delete_object")
+        self.files.pop(key, None)
+
+    async def signed_url(self, key: str) -> str:
+        return f"https://storage.test/{key}?signature=x"
+
+
 class FakeTurnstile:
     def __init__(self) -> None:
         self.passes = True
@@ -167,12 +190,18 @@ def processor(db: AsyncSession, redis: FakeAsyncRedis, bot: RecordingBot) -> Inb
 
 
 @pytest.fixture
+def storage() -> FakeStorage:
+    return FakeStorage()
+
+
+@pytest.fixture
 async def api(
     db: AsyncSession,
     redis: FakeAsyncRedis,
     outbox: Outbox,
     turnstile: FakeTurnstile,
     processor: InboundProcessor,
+    storage: FakeStorage,
 ) -> AsyncIterator[AsyncClient]:
     """HTTP client whose requests use the test session (committing like the real dependency),
     an in-memory Redis, a recording email client, a switchable CAPTCHA and a recording bot."""
@@ -191,6 +220,7 @@ async def api(
         get_email_client: lambda: outbox,
         get_turnstile_client: lambda: turnstile,
         get_inbound_processor: lambda: processor,
+        get_photo_storage: lambda: storage,
     }
     app.dependency_overrides.update(overrides)
     async with AsyncClient(
