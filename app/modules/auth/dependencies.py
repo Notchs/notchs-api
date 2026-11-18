@@ -51,7 +51,10 @@ def _login_cookie(subject_type: SubjectType, who: str, how: str) -> APIKeyCookie
 ADMIN_LOGIN = _login_cookie(SubjectType.ADMIN, "Admin", "POST /api/v1/admin/auth/login")
 VENUE_LOGIN = _login_cookie(SubjectType.VENUE_MEMBER, "Venue", "POST /api/v1/venue/auth/login")
 CUSTOMER_LOGIN = _login_cookie(
-    SubjectType.USER, "Customer", "POST /api/v1/auth/customer/consume with a WhatsApp link token"
+    SubjectType.USER,
+    "Customer",
+    "POST /api/v1/auth/customer/consume with a WhatsApp link token"
+    " (or POST /api/v1/dev/login-as-customer outside production)",
 )
 
 

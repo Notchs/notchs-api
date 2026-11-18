@@ -98,6 +98,9 @@ your own Redis container. The API refuses to start if it cannot reach either.
   their login endpoint on the page first: the browser keeps the login cookie and sends it with
   every later call, and 🔒 shows which login an endpoint needs. The page's top explains each
   login (admin, venue, customer, counter phone). Built in `app/core/api_docs.py`.
+  To be a test customer there, log in as an admin and use `POST /dev/login-as-customer` with
+  their number (admins only, never in production; the number must belong to an active customer
+  who has agreed). It runs the real login-link path, with the same 3-links-per-15-minutes limit.
 - Liveness: `GET /api/v1/health` · Readiness (checks DB and Redis): `GET /api/v1/health/ready`
 
 ### Editor (VS Code)

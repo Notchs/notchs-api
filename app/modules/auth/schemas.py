@@ -3,6 +3,7 @@ from datetime import datetime
 
 from pydantic import ConfigDict, Field
 
+from app.common.phone import Phone
 from app.common.schemas import BaseSchema, PublicCode
 from app.modules.auth.emails import Email
 from app.modules.auth.passwords import MAX_PASSWORD_LENGTH
@@ -67,6 +68,12 @@ class ConsumeLinkIn(BaseSchema):
     """The token from the WhatsApp login link (`/login/verify?token=...`)."""
 
     token: str = Field(min_length=20, max_length=100)
+
+
+class DevCustomerLoginIn(BaseSchema):
+    """`POST /dev/login-as-customer`: the test customer's WhatsApp number, any format."""
+
+    phone: Phone = Field(examples=["+919876543210"])
 
 
 class CustomerBriefOut(BaseSchema):

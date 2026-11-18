@@ -31,10 +31,15 @@ expires or you log out.
 
 - **Admin:** `POST /api/v1/admin/auth/login` with your email and password.
 - **Venue owner:** `POST /api/v1/venue/auth/login` with the venue's email and password.
-- **Customer:** log in as an admin, send `LOGIN` with `POST /api/v1/dev/simulate-inbound`,
-  then put the link's `token` into `POST /api/v1/auth/customer/consume`.
+- **Customer:** log in as an admin, then `POST /api/v1/dev/login-as-customer` with the test
+  customer's number. A new number must agree first: send any text, then the `consent_agree`
+  button, with `POST /api/v1/dev/simulate-inbound`. (The real way is the WhatsApp link's
+  `token` in `POST /api/v1/auth/customer/consume`.)
 - **Counter phone:** make a pairing link as the venue, then `POST /api/v1/display/pair`
   with its `token`.
+
+The **Authorize** button is hidden on purpose: browsers don't let a page send login cookies
+typed into it, so it never worked here.
 
 Logins for different apps don't replace each other: you can be an admin, a venue and a
 customer at once. To start again, log out or clear this site's cookies.
@@ -91,6 +96,10 @@ def docs_html(title: str, openapi_url: str) -> str:
   <meta name="robots" content="noindex, nofollow">
   <title>API docs: {title}</title>
   <link rel="stylesheet" href="{_CDN}/swagger-ui.css">
+  <style>
+    /* Logins are cookies set by the login endpoints; Swagger can't send typed-in cookies. */
+    .swagger-ui .auth-wrapper {{ display: none; }}
+  </style>
 </head>
 <body>
   <div id="swagger-ui"></div>

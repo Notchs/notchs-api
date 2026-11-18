@@ -41,13 +41,19 @@ async def test_docs_page_has_the_search_that_matches_paths(root: AsyncClient) ->
     assert "opsFilter" in page and 'op.get("path")' in page  # not only tag names
     assert '"filter": true' in page and OPENAPI in page
     assert "noindex" in page
+    assert ".auth-wrapper { display: none; }" in page  # Authorize can't send cookies: hidden
 
 
 async def test_docs_explain_how_to_log_in(schema: dict) -> None:
     description = schema["info"]["description"]
 
     assert "How to log in here" in description
-    for path in ("/admin/auth/login", "/venue/auth/login", "/auth/customer/consume"):
+    for path in (
+        "/admin/auth/login",
+        "/venue/auth/login",
+        "/auth/customer/consume",
+        "/dev/login-as-customer",
+    ):
         assert f"{settings.API_V1_PREFIX}{path}" in description
         assert f"{settings.API_V1_PREFIX}{path}" in schema["paths"]  # the help stays true
 
