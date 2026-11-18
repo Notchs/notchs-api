@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.clients.email import EmailClient
+from app.core import api_docs
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
@@ -90,15 +91,19 @@ def create_app() -> FastAPI:
     setup_logging()
 
     docs_enabled = not settings.is_production
+    openapi_url = f"{settings.API_V1_PREFIX}/openapi.json"
     app = FastAPI(
         title=settings.APP_NAME,
         version=settings.APP_VERSION,
+        description=api_docs.DESCRIPTION,
         debug=settings.DEBUG,
         lifespan=lifespan,
-        openapi_url=f"{settings.API_V1_PREFIX}/openapi.json" if docs_enabled else None,
-        docs_url="/docs" if docs_enabled else None,
+        openapi_url=openapi_url if docs_enabled else None,
+        docs_url=None,  # our own page with search and login help: app/core/api_docs.py
         redoc_url="/redoc" if docs_enabled else None,
     )
+    if docs_enabled:
+        api_docs.add_docs_page(app, title=settings.APP_NAME, openapi_url=openapi_url)
 
     app.add_middleware(ProtectionMiddleware)
     # Added last, so it runs first: every request is logged, refused ones included.

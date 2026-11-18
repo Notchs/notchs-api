@@ -2,7 +2,8 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, Security, status
+from fastapi.security import APIKeyCookie
 
 from app.common.dependencies import DBSession, RedisClient
 from app.common.http import client_ip
@@ -34,11 +35,19 @@ def get_counter_service(session: DBSession, redis: RedisClient) -> CounterServic
 CounterServiceDep = Annotated[CounterService, Depends(get_counter_service)]
 
 
+# Declared so the API docs show which endpoints the counter phone calls; read exactly as before.
+COUNTER_PHONE_LOGIN = APIKeyCookie(
+    name=DEVICE_COOKIE,
+    scheme_name="Counter phone",
+    description="Set by pairing: POST /api/v1/display/pair with a pairing link's token.",
+    auto_error=False,
+)
+
+
 async def current_counter(
-    request: Request, service: CounterServiceDep
+    service: CounterServiceDep, raw: Annotated[str | None, Security(COUNTER_PHONE_LOGIN)]
 ) -> tuple[CounterDevice, Venue]:
     """The paired counter phone calling, from its `nx_device` cookie."""
-    raw = request.cookies.get(DEVICE_COOKIE)
     found = await service.device(raw) if raw else None
     if found is None:
         raise DeviceNotPairedException()

@@ -6,13 +6,17 @@
 Each one verifies the JWT in that audience's access cookie and loads the account. Missing,
 expired or tampered cookies give 401 `auth.not_authenticated`; a deactivated account gives
 403 `auth.account_inactive`.
+
+The cookies are declared as security schemes (`APIKeyCookie`), so the API docs show a lock and
+which login each endpoint needs. That only describes them: the cookie is read exactly as before.
 """
 
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any
 
-from fastapi import Depends, Request
+from fastapi import Depends, Security
+from fastapi.security import APIKeyCookie
 
 from app.common.dependencies import DBSession
 from app.modules.admin_users.models import AdminRole, AdminUser
@@ -34,36 +38,58 @@ from app.modules.users.models import User
 from app.modules.venues.models import VenueMember
 
 
-def access_claims(request: Request, subject_type: SubjectType) -> AccessClaims:
-    token = request.cookies.get(access_cookie_name(subject_type))
+def _login_cookie(subject_type: SubjectType, who: str, how: str) -> APIKeyCookie:
+    # auto_error=False: a missing cookie is our own 401 `auth.not_authenticated`, not FastAPI's.
+    return APIKeyCookie(
+        name=access_cookie_name(subject_type),
+        scheme_name=f"{who} login",
+        description=f"Set by logging in: {how}. The browser sends it by itself.",
+        auto_error=False,
+    )
+
+
+ADMIN_LOGIN = _login_cookie(SubjectType.ADMIN, "Admin", "POST /api/v1/admin/auth/login")
+VENUE_LOGIN = _login_cookie(SubjectType.VENUE_MEMBER, "Venue", "POST /api/v1/venue/auth/login")
+CUSTOMER_LOGIN = _login_cookie(
+    SubjectType.USER, "Customer", "POST /api/v1/auth/customer/consume with a WhatsApp link token"
+)
+
+
+def access_claims(token: str | None, subject_type: SubjectType) -> AccessClaims:
     if not token:
         raise NotAuthenticatedException()
     return decode_access_token(token, expected_type=subject_type)
 
 
 async def _load[ModelT](
-    request: Request,
+    token: str | None,
     session: DBSession,
     subject_type: SubjectType,
     load_active: Callable[[Any, uuid.UUID], Awaitable[ModelT | None]],
 ) -> ModelT:
-    claims = access_claims(request, subject_type)
+    claims = access_claims(token, subject_type)
     account = await load_active(session, claims.subject_id)
     if account is None:
         raise AccountInactiveException()
     return account
 
 
-async def current_venue_member(request: Request, session: DBSession) -> VenueMember:
-    return await _load(request, session, SubjectType.VENUE_MEMBER, active_venue_member)
+async def current_venue_member(
+    session: DBSession, token: Annotated[str | None, Security(VENUE_LOGIN)]
+) -> VenueMember:
+    return await _load(token, session, SubjectType.VENUE_MEMBER, active_venue_member)
 
 
-async def current_admin(request: Request, session: DBSession) -> AdminUser:
-    return await _load(request, session, SubjectType.ADMIN, active_admin)
+async def current_admin(
+    session: DBSession, token: Annotated[str | None, Security(ADMIN_LOGIN)]
+) -> AdminUser:
+    return await _load(token, session, SubjectType.ADMIN, active_admin)
 
 
-async def current_user(request: Request, session: DBSession) -> User:
-    return await _load(request, session, SubjectType.USER, active_user)
+async def current_user(
+    session: DBSession, token: Annotated[str | None, Security(CUSTOMER_LOGIN)]
+) -> User:
+    return await _load(token, session, SubjectType.USER, active_user)
 
 
 def get_session_service(session: DBSession) -> SessionService:
