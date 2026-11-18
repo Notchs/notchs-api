@@ -93,7 +93,11 @@ docker compose up --build
 This starts the API (with hot reload) against the database in `.env` (shared Neon DB), plus
 your own Redis container. The API refuses to start if it cannot reach either.
 
-- API docs: http://localhost:8000/docs (disabled in production)
+- API docs: http://localhost:8000/docs (disabled in production). The search box finds endpoints
+  by path, name, method or section (`login`, `/me`, `claims`). To try endpoints as someone, run
+  their login endpoint on the page first: the browser keeps the login cookie and sends it with
+  every later call, and 🔒 shows which login an endpoint needs. The page's top explains each
+  login (admin, venue, customer, counter phone). Built in `app/core/api_docs.py`.
 - Liveness: `GET /api/v1/health` · Readiness (checks DB and Redis): `GET /api/v1/health/ready`
 
 ### Editor (VS Code)
