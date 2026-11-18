@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.modules.admin_panel.router import router as admin_panel_router
 from app.modules.admin_users.router import router as admin_users_router
 from app.modules.auth.admin_router import router as admin_auth_router
+from app.modules.auth.dev_router import router as auth_dev_router
 from app.modules.auth.router import router as auth_router
 from app.modules.auth.venue_router import router as venue_auth_router
 from app.modules.claims.router import admin_router as admin_claims_router
@@ -48,3 +49,4 @@ api_router.include_router(venue_insights_router)
 api_router.include_router(display_router)
 api_router.include_router(whatsapp_router)
 api_router.include_router(whatsapp_dev_router)
+api_router.include_router(auth_dev_router)

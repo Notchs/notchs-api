@@ -7,6 +7,8 @@ from fastapi import Depends, Query
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.common.exceptions import NotFoundException
+from app.core.config import settings
 from app.core.redis import get_redis
 from app.db.session import get_db_session
 
@@ -25,3 +27,9 @@ class PaginationParams:
 
 
 Pagination = Annotated[PaginationParams, Depends()]
+
+
+def not_in_production() -> None:
+    """For dev tools (`/dev/...`): they don't exist in production (a plain 404)."""
+    if settings.is_production:
+        raise NotFoundException()

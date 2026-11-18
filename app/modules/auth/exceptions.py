@@ -2,6 +2,7 @@ from app.common.exceptions import (
     BadRequestException,
     ConflictException,
     ForbiddenException,
+    NotFoundException,
     TooManyRequestsException,
     UnauthorizedException,
     UnprocessableException,
@@ -72,3 +73,11 @@ class EmailNotAllowedException(UnprocessableException):
 class CaptchaFailedException(BadRequestException):
     error_code = "captcha.failed"
     message = "Please complete the security check again."
+
+
+class DevCustomerNotFoundException(NotFoundException):
+    error_code = "dev.customer_not_found"
+    message = (
+        "No active customer with that number has agreed to the privacy notice. "
+        "Use the bot simulator first: send any message, then tap I agree."
+    )

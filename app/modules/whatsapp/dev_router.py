@@ -14,8 +14,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 
 from app.clients.whatsapp import SendResult
-from app.common.dependencies import DBSession
-from app.common.exceptions import NotFoundException
+from app.common.dependencies import DBSession, not_in_production
 from app.common.phone import masked_phone
 from app.common.schemas import CustomResponse
 from app.core.config import settings
@@ -33,11 +32,6 @@ from app.modules.whatsapp.service import WhatsAppWebhookService
 from app.modules.whatsapp.webhook import parse_webhook
 
 logger = get_logger(__name__)
-
-
-def not_in_production() -> None:
-    if settings.is_production:
-        raise NotFoundException()
 
 
 router = APIRouter(

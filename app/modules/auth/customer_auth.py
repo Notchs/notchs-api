@@ -51,6 +51,17 @@ class CustomerAuthService:
         Raises AuthRateLimited after 3 links in 15 minutes; raises TokenInvalid for a blocked
         or deleted customer, so the bot never sends them a link.
         """
+        return login_link(await self._issue_link_token(user))
+
+    async def dev_login(
+        self, user: User, *, ip: str | None, user_agent: str | None
+    ) -> CustomerLogin:
+        """`POST /dev/login-as-customer` (never in production): the same single-use link token the
+        bot would send, used at once. Same checks and the same 3-per-15-minutes limit."""
+        raw = await self._issue_link_token(user)
+        return await self.consume(raw, ip=ip, user_agent=user_agent)
+
+    async def _issue_link_token(self, user: User) -> str:
         if await active_user(self.session, user.id) is None:
             raise TokenInvalidException()
         if not await rate_limit.hit(
@@ -60,8 +71,7 @@ class CustomerAuthService:
             window_seconds=LINK_WINDOW_SECONDS,
         ):
             raise AuthRateLimitedException("Too many login links. Try again in 15 minutes.")
-        raw = await self.tokens.issue(user_subject(user), TokenType.MAGIC_LINK)
-        return login_link(raw)
+        return await self.tokens.issue(user_subject(user), TokenType.MAGIC_LINK)
 
     async def consume(
         self, raw_token: str, *, ip: str | None, user_agent: str | None
