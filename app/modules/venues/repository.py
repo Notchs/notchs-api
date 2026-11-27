@@ -1,12 +1,16 @@
 import uuid
 from collections.abc import Sequence
+from datetime import date
 
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, Row, func, select
 
 from app.common.repository import BaseRepository
-from app.modules.locations.models import Area, City
+from app.modules.locations.models import Area, City, CityStatus
+from app.modules.scans.models import Visit, VisitStatus
+from app.modules.venues import ranking
 from app.modules.venues.founding import next_founding_no
-from app.modules.venues.models import Venue
+from app.modules.venues.models import Venue, VenueStatus
+from app.modules.venues.ranking import Score
 
 
 class VenueRepository(BaseRepository[Venue]):
@@ -84,6 +88,81 @@ class VenueRepository(BaseRepository[Venue]):
 
     async def get_area(self, area_id: uuid.UUID) -> Area | None:
         return await self.session.get(Area, area_id)
+
+    async def get_live_city_by_slug(self, slug: str) -> City | None:
+        query = select(City).where(City.slug == slug, City.status == CityStatus.LIVE)
+        return (await self.session.scalars(query)).one_or_none()
+
+    async def list_on_map(
+        self, city_id: uuid.UUID, *, category: str | None, limit: int
+    ) -> Sequence[Row]:
+        """Places the public map may show: live, shown on Discover by their owner, located,
+        not deleted. Only the columns a pin needs, with the area's name."""
+        query = (
+            select(
+                Venue.id,
+                Venue.venue_code,
+                Venue.name,
+                Venue.slug,
+                Venue.category,
+                Venue.latitude,
+                Venue.longitude,
+                Area.name.label("area"),
+            )
+            .outerjoin(Area, Area.id == Venue.area_id)
+            .where(
+                Venue.deleted_at.is_(None),
+                Venue.city_id == city_id,
+                Venue.status == VenueStatus.COUNTER_LIVE,
+                Venue.visible_on_discover.is_(True),
+                Venue.latitude.is_not(None),
+                Venue.longitude.is_not(None),
+            )
+            .order_by(Venue.name, Venue.id)
+            .limit(limit)
+        )
+        if category is not None:
+            query = query.where(Venue.category == category)
+        return (await self.session.execute(query)).all()
+
+    async def visit_scores(
+        self, venue_ids: Sequence[uuid.UUID], today: date
+    ) -> dict[uuid.UUID, Score]:
+        """Each place's ranking score from its valid visits (venues/ranking.py). Places with no
+        counting visit are left out."""
+        if not venue_ids:
+            return {}
+        per_customer = (
+            select(
+                Visit.venue_id,
+                func.least(
+                    func.sum(ranking.weight_sql(Visit.visit_date, today)),
+                    ranking.MAX_PER_CUSTOMER,
+                ).label("points"),
+            )
+            .where(
+                Visit.venue_id.in_(venue_ids),
+                Visit.status == VisitStatus.VALID,
+                Visit.visit_date >= ranking.first_counted_day(today),
+                Visit.visit_date <= today,
+            )
+            .group_by(Visit.venue_id, Visit.user_id)
+            .subquery()
+        )
+        query = (
+            select(
+                per_customer.c.venue_id,
+                func.sum(per_customer.c.points),
+                func.count(),
+            )
+            .where(per_customer.c.points > 0)
+            .group_by(per_customer.c.venue_id)
+        )
+        rows = (await self.session.execute(query)).all()
+        return {
+            venue_id: Score(points=int(points), customers=customers)
+            for venue_id, points, customers in rows
+        }
 
     async def _one(self, *conditions: ColumnElement[bool]) -> Venue | None:
         query = select(Venue).where(*conditions, Venue.deleted_at.is_(None))
