@@ -22,6 +22,9 @@ class MapVenueProperties(BaseSchema):
     slug: str
     category: str
     area: str | None
+    # Its rank among the places of its kind in the city (venues/ranking.py); None until it has
+    # counting visits. Visit counts are never sent.
+    rank: int | None
 
 
 class MapVenueFeature(BaseSchema):
@@ -44,4 +47,5 @@ class MapCity(BaseSchema):
 
 class VenueMapOut(BaseSchema):
     city: MapCity
+    # Ranked places first, best first, then the unranked ones A to Z.
     venues: MapVenueCollection

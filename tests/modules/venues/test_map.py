@@ -22,12 +22,12 @@ def _row(**overrides) -> SimpleNamespace:
 
 
 def test_points_are_longitude_first_as_geojson_wants() -> None:
-    feature = to_feature(_row())
+    feature = to_feature(_row(), None)
     assert feature.geometry.coordinates == (72.585022, 23.033863)
 
 
 def test_a_feature_carries_only_what_a_pin_needs() -> None:
-    dumped = to_feature(_row()).model_dump()
+    dumped = to_feature(_row(), 3).model_dump()
     assert dumped == {
         "type": "Feature",
         "geometry": {"type": "Point", "coordinates": (72.585022, 23.033863)},
@@ -37,16 +37,17 @@ def test_a_feature_carries_only_what_a_pin_needs() -> None:
             "slug": "kahwa-house",
             "category": "cafe",
             "area": "SBR",
+            "rank": 3,
         },
     }
 
 
 def test_a_place_without_an_area_still_shows() -> None:
-    assert to_feature(_row(area=None)).properties.area is None
+    assert to_feature(_row(area=None), None).properties.area is None
 
 
 def test_the_collection_is_a_geojson_feature_collection() -> None:
-    collection = MapVenueCollection(features=[to_feature(_row())]).model_dump(mode="json")
+    collection = MapVenueCollection(features=[to_feature(_row(), None)]).model_dump(mode="json")
     assert collection["type"] == "FeatureCollection"
     assert collection["features"][0]["geometry"]["coordinates"] == [72.585022, 23.033863]
 

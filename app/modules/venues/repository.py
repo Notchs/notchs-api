@@ -1,12 +1,16 @@
 import uuid
 from collections.abc import Sequence
+from datetime import date
 
 from sqlalchemy import ColumnElement, Row, func, select
 
 from app.common.repository import BaseRepository
 from app.modules.locations.models import Area, City, CityStatus
+from app.modules.scans.models import Visit, VisitStatus
+from app.modules.venues import ranking
 from app.modules.venues.founding import next_founding_no
 from app.modules.venues.models import Venue, VenueStatus
+from app.modules.venues.ranking import Score
 
 
 class VenueRepository(BaseRepository[Venue]):
@@ -96,6 +100,7 @@ class VenueRepository(BaseRepository[Venue]):
         not deleted. Only the columns a pin needs, with the area's name."""
         query = (
             select(
+                Venue.id,
                 Venue.venue_code,
                 Venue.name,
                 Venue.slug,
@@ -119,6 +124,45 @@ class VenueRepository(BaseRepository[Venue]):
         if category is not None:
             query = query.where(Venue.category == category)
         return (await self.session.execute(query)).all()
+
+    async def visit_scores(
+        self, venue_ids: Sequence[uuid.UUID], today: date
+    ) -> dict[uuid.UUID, Score]:
+        """Each place's ranking score from its valid visits (venues/ranking.py). Places with no
+        counting visit are left out."""
+        if not venue_ids:
+            return {}
+        per_customer = (
+            select(
+                Visit.venue_id,
+                func.least(
+                    func.sum(ranking.weight_sql(Visit.visit_date, today)),
+                    ranking.MAX_PER_CUSTOMER,
+                ).label("points"),
+            )
+            .where(
+                Visit.venue_id.in_(venue_ids),
+                Visit.status == VisitStatus.VALID,
+                Visit.visit_date >= ranking.first_counted_day(today),
+                Visit.visit_date <= today,
+            )
+            .group_by(Visit.venue_id, Visit.user_id)
+            .subquery()
+        )
+        query = (
+            select(
+                per_customer.c.venue_id,
+                func.sum(per_customer.c.points),
+                func.count(),
+            )
+            .where(per_customer.c.points > 0)
+            .group_by(per_customer.c.venue_id)
+        )
+        rows = (await self.session.execute(query)).all()
+        return {
+            venue_id: Score(points=int(points), customers=customers)
+            for venue_id, points, customers in rows
+        }
 
     async def _one(self, *conditions: ColumnElement[bool]) -> Venue | None:
         query = select(Venue).where(*conditions, Venue.deleted_at.is_(None))

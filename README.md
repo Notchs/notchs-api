@@ -526,8 +526,22 @@ can highlight cafes. A place shows only when it is live (`counter_live`), its ow
 
 `data.venues` is a GeoJSON `FeatureCollection` that MapLibre takes as is
 (`map.addSource("venues", {type: "geojson", data: body.data.venues})`). Each point has
-`venue_code`, `name`, `slug`, `category` and `area`, and nothing about owners, billing or customers.
-`data.city` gives `slug`, `name` and `center` (`[longitude, latitude]`, or null) for the first view.
+`venue_code`, `name`, `slug`, `category`, `area` and `rank`, and nothing about owners, billing or
+customers. Ranked places come first, best first, then unranked ones A to Z. `data.city` gives
+`slug`, `name` and `center` (`[longitude, latitude]`, or null) for the first view.
+
+**Ranks** (user decision 27 Nov 2026, numbers provisional, in `app/modules/venues/ranking.py`):
+places are ranked within their city and kind (cafes against cafes), among the places the map
+shows, from valid visits only:
+
+- a visit in the last 30 days counts 100%, then 10% less each week, so after about 3 months it
+  stops counting. Ranks are live: no reset on the 1st;
+- one customer counts once a day at a place (the `visits` table already enforces it) and adds at
+  most 8 visits' worth to it, so staff or one regular can't push a place up;
+- equal scores go to the place with more different customers; still equal, they share the rank
+  (1, 2, 2, 4). A place with no counting visit has `rank: null`.
+
+Only the rank is public. Visit counts are never sent.
 
 | Endpoint | Who | Notes |
 |---|---|---|
