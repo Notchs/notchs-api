@@ -21,6 +21,7 @@ from app.modules.venue_applications.admin_router import router as admin_applicat
 from app.modules.venue_applications.router import router as venue_applications_router
 from app.modules.venue_insights.router import router as venue_insights_router
 from app.modules.venues.counter_router import display_router, owner_router
+from app.modules.venues.map_router import router as venue_map_router
 from app.modules.venues.profile_router import router as venue_profile_router
 from app.modules.whatsapp.dev_router import router as whatsapp_dev_router
 from app.modules.whatsapp.router import router as whatsapp_router
@@ -37,6 +38,7 @@ api_router.include_router(admin_users_router)
 api_router.include_router(admin_applications_router)
 api_router.include_router(admin_panel_router)
 api_router.include_router(leaderboards_router)
+api_router.include_router(venue_map_router)
 api_router.include_router(passport_router)
 api_router.include_router(referrals_router)
 api_router.include_router(claims_router)

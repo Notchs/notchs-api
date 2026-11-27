@@ -32,6 +32,16 @@ class VenueLocationInvalidException(BadRequestException):
     message = "The city or area does not exist, or the area is not in this city."
 
 
+class VenueMapCityNotFoundException(NotFoundException):
+    error_code = "venues.map_city_not_found"
+    message = "This city has no map."
+
+
+class VenueMapRateLimitedException(TooManyRequestsException):
+    error_code = "venues.map_rate_limited"
+    message = "Too many requests. Please try again in a minute."
+
+
 class CounterNotFoundException(NotFoundException):
     error_code = "counters.not_found"
     message = "This venue has no counter phone yet."

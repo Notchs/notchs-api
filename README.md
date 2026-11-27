@@ -45,7 +45,7 @@ notchs-api/
 │       ├── tags/               # Tags (admins only), venue tags and items, "What did you try?"
 │       ├── users/              # Customers (model only)
 │       ├── venue_applications/ # "Apply as a venue" form + admin review (approve/reject)
-│       ├── venues/             # Venues, venue members, counter phone pairing and display
+│       ├── venues/             # Venues, venue members, counter phone pairing and display, the public map
 │       └── whatsapp/           # WhatsApp: messages table, sender, webhook, processing
 ├── alembic/                    # Database migrations
 ├── tests/                      # Mirrors app/ layout
@@ -516,6 +516,22 @@ keep their place, but their row has no name or handle until they choose to be pu
 | `GET /leaderboards?city_id=&period=month&limit=50` | Public | `period` is `month` or `all`; `limit` up to 100; 60 calls a minute per IP |
 | `GET /leaderboards/me` | Logged-in customer | Their rank and points in their home city, and `is_public` |
 | `PATCH /leaderboards/me` | Logged-in customer | `{is_public}`: show or hide their name |
+
+## Map
+
+`GET /venues/map?city=<slug>&category=cafe` gives a live city's places for the website's map
+(MapLibre GL). `category` is optional, so one call can fetch every kind of place and the website
+can highlight cafes. A place shows only when it is live (`counter_live`), its owner left
+`visible_on_discover` on, it has coordinates and it is not deleted. Real rows only.
+
+`data.venues` is a GeoJSON `FeatureCollection` that MapLibre takes as is
+(`map.addSource("venues", {type: "geojson", data: body.data.venues})`). Each point has
+`venue_code`, `name`, `slug`, `category` and `area`, and nothing about owners, billing or customers.
+`data.city` gives `slug`, `name` and `center` (`[longitude, latitude]`, or null) for the first view.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `GET /venues/map?city=&category=` | Public | Hidden, coming-soon and unknown cities get the same `404 venues.map_city_not_found`; 60 calls a minute per IP; cached 5 minutes |
 
 ## Tags
 
