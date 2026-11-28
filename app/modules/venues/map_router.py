@@ -22,8 +22,8 @@ MAX_REQUESTS_PER_MINUTE = 60
 CACHE_CONTROL = "public, max-age=300"
 
 
-def get_map_service(session: DBSession) -> VenueMapService:
-    return VenueMapService(VenueRepository(session))
+def get_map_service(session: DBSession, redis: RedisClient) -> VenueMapService:
+    return VenueMapService(VenueRepository(session), redis)
 
 
 @router.get(
@@ -44,7 +44,7 @@ async def venue_map(
     ] = None,
 ) -> CustomResponse[VenueMapOut]:
     ip = client_ip(request)
-    if ip and not await rate_limit.hit(
+    if ip and not await rate_limit.hit_or_allow(
         redis, f"rl:venue-map:{ip}", limit=MAX_REQUESTS_PER_MINUTE, window_seconds=60
     ):
         raise VenueMapRateLimitedException()

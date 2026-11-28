@@ -300,3 +300,39 @@ async def test_kinds_are_ranked_apart_and_hidden_places_take_no_rank(
 
     assert ranks(everything) == {"Big Restaurant": 1, "Small Cafe": 1}
     assert ranks(cafes) == {"Small Cafe": 1}
+
+
+# --- cache ----------------------------------------------------------------------------------------
+
+
+async def test_a_citys_map_is_cached_for_a_minute(
+    api: AsyncClient, db: AsyncSession, redis
+) -> None:
+    city = await add_city(db)
+    await add_place(db, city, "Kahwa House")
+    await db.commit()
+
+    first = await api.get("/venues/map", params={"city": city.slug})
+    await add_place(db, city, "Thali Ghar")  # joins after the map was cached
+    await db.commit()
+    second = await api.get("/venues/map", params={"city": city.slug})
+
+    assert second.json() == first.json()
+    assert 0 < await redis.ttl(f"cache:venue-map:{city.slug}:all") <= 60
+    await redis.delete(f"cache:venue-map:{city.slug}:all")  # as when the minute is up
+    third = await api.get("/venues/map", params={"city": city.slug})
+    assert names(third.json()) == ["Kahwa House", "Thali Ghar"]
+
+
+async def test_each_kind_of_place_is_cached_apart(
+    api: AsyncClient, db: AsyncSession, redis
+) -> None:
+    city = await add_city(db)
+    await add_place(db, city, "Kahwa House")
+    await add_place(db, city, "Thali Ghar", category="restaurant")
+    await db.commit()
+
+    await api.get("/venues/map", params={"city": city.slug})
+    cafes = await api.get("/venues/map", params={"city": city.slug, "category": "cafe"})
+
+    assert names(cafes.json()) == ["Kahwa House"]

@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from redis.exceptions import RedisError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.common.exceptions import AppException
@@ -49,6 +50,18 @@ async def _validation_exception_handler(_: Request, exc: RequestValidationError)
     )
 
 
+async def _redis_exception_handler(_: Request, exc: RedisError) -> JSONResponse:
+    """Redis holds login codes, sessions' limits and leaderboards, so those can't work without
+    it: a clear, retryable 503 instead of a 500 (public limits that can be skipped are skipped
+    before this, see rate_limit.hit_or_allow)."""
+    logger.error("Redis did not answer: %s", type(exc).__name__)
+    return _error_response(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        "service_unavailable",
+        "This is unavailable for a moment. Please try again in a minute.",
+    )
+
+
 async def _unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled exception", exc_info=exc)
     return _error_response(
@@ -60,4 +73,5 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppException, _app_exception_handler)
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
     app.add_exception_handler(RequestValidationError, _validation_exception_handler)
+    app.add_exception_handler(RedisError, _redis_exception_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)
