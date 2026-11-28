@@ -12,6 +12,7 @@ notchs-api/
 │   ├── cli.py                  # python -m app.cli: seed, create-admin, admin-link
 │   ├── api/
 │   │   └── router.py           # Registers every module router under /api/v1
+│   ├── jobs/                   # Background jobs on Redis: queue, worker, the email job
 │   ├── core/                   # Cross-cutting concerns
 │   │   ├── config.py           # Settings (env / .env)
 │   │   ├── logging.py          # Logging setup
@@ -207,6 +208,30 @@ docker compose exec redis redis-cli            # inspect keys
 docker compose exec redis redis-cli FLUSHDB    # wipe your local Redis
 ```
 
+## Background jobs (emails)
+
+Every email goes through a job queue on Redis (`app/jobs/`): a request only queues it, and the
+job worker sends it. So an email survives a restart and is retried when Resend fails.
+
+- **Where the worker runs:** inside every API server by default (`JOBS_WORKER_IN_API=true`), so
+  deploying needs nothing extra. It can also run on its own: `python -m app.jobs.worker` (or
+  `docker compose --profile worker up worker`), then set `JOBS_WORKER_IN_API=false` on the API.
+  Running both is safe.
+- **Each job once:** the `jobs` stream is read by one consumer group, so however many workers run,
+  each job goes to one of them.
+- **Retries:** a failed job is tried again after 1, 2, 4, 8 and 16 minutes, then dropped with an
+  error in the log. A job a stopped worker had taken is picked up by another on the same schedule.
+- **Never twice:** a done job keeps a marker for a day and is never run again, and Resend gets the
+  job id as its `Idempotency-Key`, so a retry after a lost answer sends nothing new.
+- **No personal data left behind:** a job is deleted from Redis once done or dropped, and the log
+  shows job ids only, never addresses or email text.
+- **Redis down:** the email is sent at once instead of queued, so it is not lost.
+- **A new kind of job:** write an `async def handler(payload, job_id)`, add it to
+  `app/jobs/handlers.py`, and queue it with `app.jobs.queue.enqueue(redis, kind, payload)`.
+
+The admin panel's "send a test email" is the one exception: it sends straight away, because its
+job is to show whether Resend works right now.
+
 ## Auth, email, CAPTCHA and WhatsApp settings
 
 Local work needs none of these: the defaults use a built-in development JWT secret, write
@@ -233,6 +258,7 @@ production refuse to start until the real values are set.
 | `WHATSAPP_PUBLIC_NUMBER` | The number customers message, digits with the country code (e.g. `15556755530`, the test number). Counter phones put it in their scan QR. Required in production. |
 | `WHATSAPP_STAMP_IMAGE_URL` | Optional public https image sent with a stamp. Unset: the stamp is a text message. |
 | `WHATSAPP_SWEEP_INTERVAL_SECONDS` | How often the API retries incoming messages left unhandled (default `60`; `0` turns it off). |
+| `JOBS_WORKER_IN_API` | `true` (default): the API runs the job worker that sends emails. Set `false` only when the worker runs as its own process. |
 
 ### Sessions (for the frontends)
 
@@ -418,6 +444,9 @@ café, restaurant, bar, hotel, turf / box ground / gym, theatre, other.
   minute (default 600) over the whole API, then `429` with `Retry-After`. Health checks and Meta's
   webhook are never counted. If Redis is down the limit is skipped, never the request. The
   per-feature limits (logins, codes, scans, applications) still apply on top.
+- **Redis down:** the public map and leaderboard skip their own limits too. Anything that needs
+  Redis to be safe (login codes, password resets, sessions' limits) answers
+  `503 service_unavailable` ("try again in a minute"), never a 500.
 - **The visitor's address** (`app/common/http.py`): the API is behind proxies, so it reads
   Netlify's `X-Nf-Client-Connection-Ip`, then the edge's `CF-Connecting-IP`, then the last public
   entry of `X-Forwarded-For`. The first entries of `X-Forwarded-For` can be made up and are never
@@ -502,6 +531,9 @@ the city the visit happened in. Postgres (`points_ledger`) is the truth: boards 
 at startup and every `LEADERBOARD_REBUILD_INTERVAL_SECONDS`, so an emptied Redis repairs itself. To
 do it now: `python -m app.cli rebuild-leaderboards`.
 
+With several API servers, only one rebuilds each round: it takes a Redis lock that lasts 90% of
+the interval and ends by itself, so a server that stops mid-rebuild never blocks the others.
+
 **Rank decay** (team decision, provisional; the rate is ours, in `app/modules/leaderboards/decay.py`):
 after 15 days without a Notch, the points that count for rank drop 10% a week (day 16: 90%, day 23:
 80%... down to 0%), and the next Notch brings them all back. The points a customer earned never
@@ -545,7 +577,7 @@ Only the rank is public. Visit counts are never sent.
 
 | Endpoint | Who | Notes |
 |---|---|---|
-| `GET /venues/map?city=&category=` | Public | Hidden, coming-soon and unknown cities get the same `404 venues.map_city_not_found`; 60 calls a minute per IP; cached 5 minutes |
+| `GET /venues/map?city=&category=` | Public | Hidden, coming-soon and unknown cities get the same `404 venues.map_city_not_found`; 60 calls a minute per IP; kept in Redis for 60 seconds per city and kind, and browsers may reuse it for 5 minutes |
 
 ## Tags
 

@@ -9,6 +9,13 @@ STRONG = "x" * 40
 DEPLOYED = {"JWT_SECRET": STRONG, "TOTP_ENCRYPTION_KEY": Fernet.generate_key().decode()}
 
 
+@pytest.fixture(autouse=True)
+def no_env_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only what each test passes: a developer's own .env (DEBUG=true, local test values) must
+    not change the answer, as it never does in CI."""
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+
+
 def test_local_runs_with_the_dev_defaults() -> None:
     settings = Settings(ENVIRONMENT="local")
 

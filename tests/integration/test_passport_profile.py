@@ -10,6 +10,7 @@ from httpx import AsyncClient
 from PIL import Image
 from sqlalchemy import select
 
+from app.common.time import ist_date
 from app.modules.consents.models import Consent
 from app.modules.locations.models import City, CityStatus
 from app.modules.passport.service import MAX_PHOTOS_PER_HOUR
@@ -22,7 +23,8 @@ from tests.integration.test_scan_bot import add_customer
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
-TODAY = datetime.now(UTC).date()
+# India's date, as the app counts ages (UTC is still "yesterday" from 00:00 to 05:30 IST).
+TODAY = ist_date(datetime.now(UTC))
 
 
 def years_ago(years: int, days: int = 0) -> date:
