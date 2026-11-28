@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request, Response
-from sqlalchemy import select
 
 from app.common.dependencies import DBSession, RedisClient
 from app.common.http import client_ip
@@ -26,7 +25,6 @@ from app.modules.leaderboards.schemas import (
     VisibilityIn,
 )
 from app.modules.leaderboards.service import LeaderboardService, Period, last_notch_on
-from app.modules.locations.models import City, CityStatus
 
 router = APIRouter(prefix="/leaderboards", tags=["Leaderboards"])
 
@@ -49,16 +47,14 @@ async def leaderboard(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> CustomResponse[LeaderboardOut]:
     ip = client_ip(request)
-    if ip and not await rate_limit.hit(
+    if ip and not await rate_limit.hit_or_allow(
         redis, f"rl:leaderboard:{ip}", limit=MAX_REQUESTS_PER_MINUTE, window_seconds=60
     ):
         raise LeaderboardRateLimitedException()
-    live = await session.scalar(
-        select(City.id).where(City.id == city_id, City.status == CityStatus.LIVE)
-    )
-    if live is None:
+    service = LeaderboardService(redis)
+    if not await service.is_live_city(session, city_id):
         raise LeaderboardCityNotFoundException()
-    rows, total = await LeaderboardService(redis).top(session, city_id, period, limit)
+    rows, total = await service.top(session, city_id, period, limit)
     response.headers["Cache-Control"] = CACHE_CONTROL
     return CustomResponse(
         message="OK",

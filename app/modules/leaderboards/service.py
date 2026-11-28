@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.time import IST, ist_date
 from app.core.logging import get_logger
 from app.modules.leaderboards.decay import DECAY_AFTER_DAYS, kept_percent, rank_points
+from app.modules.locations.models import City, CityStatus
 from app.modules.scans.models import PointsEntry, Visit, VisitStatus
 from app.modules.users.models import User, UserStatus
 from app.modules.venues.models import Venue
@@ -104,6 +105,14 @@ class LeaderboardService:
             return None
         ahead = await self.redis.zcount(key, f"({score}", "+inf")
         return Rank(rank=ahead + 1, points=int(score))
+
+    @staticmethod
+    async def is_live_city(session: AsyncSession, city_id: uuid.UUID) -> bool:
+        """Only live cities have a public leaderboard."""
+        found = await session.scalar(
+            select(City.id).where(City.id == city_id, City.status == CityStatus.LIVE)
+        )
+        return found is not None
 
     async def top(
         self,
@@ -285,11 +294,35 @@ async def run_rebuilder(
     """Background loop started with the app: rebuild now, then every `interval_seconds`."""
     while True:
         try:
-            async with session_factory() as session:
-                boards = await LeaderboardService(redis).rebuild(session)
-            logger.info("Leaderboards rebuilt: %d board(s)", boards)
+            await rebuild_round(session_factory, redis, interval_seconds)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("Leaderboard rebuild failed; trying again next round")
         await asyncio.sleep(interval_seconds)
+
+
+REBUILD_LOCK_KEY = "lock:leaderboard-rebuild"
+
+
+async def rebuild_round(
+    session_factory: Callable[[], AsyncSession], redis: Redis, interval_seconds: float
+) -> bool:
+    """One round of the loop. Every API server runs the loop, so only the one that takes the
+    lock rebuilds; the lock lasts just under a round and is never released by hand, so a server
+    that stops mid-rebuild never leaves it stuck. True if this server rebuilt."""
+    ttl_ms = max(1000, int(interval_seconds * 900))  # 90% of the interval
+    token = uuid.uuid4().hex
+    if not await redis.set(REBUILD_LOCK_KEY, token, nx=True, px=ttl_ms):
+        logger.info("Leaderboards: another server is rebuilding this round")
+        return False
+    try:
+        async with session_factory() as session:
+            boards = await LeaderboardService(redis).rebuild(session)
+    except Exception:
+        # A failed round must not block the others: let the next try go ahead (if still ours).
+        if await redis.get(REBUILD_LOCK_KEY) == token:
+            await redis.delete(REBUILD_LOCK_KEY)
+        raise
+    logger.info("Leaderboards rebuilt: %d board(s)", boards)
+    return True
