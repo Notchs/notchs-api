@@ -1,15 +1,17 @@
-fastapi>=0.115,<1.0
-uvicorn[standard]>=0.32
-pydantic>=2.10,<3.0
-pydantic-settings>=2.6,<3.0
-sqlalchemy[asyncio]>=2.0.36,<2.1
-asyncpg>=0.30
-alembic>=1.14
-redis>=5.2,<8.0
-httpx>=0.28
-argon2-cffi>=23.1
-pyjwt>=2.9
-cryptography>=43.0
-boto3>=1.40,<2
-pillow>=13.0,<14
-python-multipart>=0.0.34,<0.1
+# Exact versions (CLAUDE.md §3), so every build installs what CI tested. To upgrade: change the
+# version here, check advisories, run the checks, open a PR.
+fastapi==0.165.0
+uvicorn[standard]==0.54.0
+pydantic==2.14.4
+pydantic-settings==2.16.3
+sqlalchemy[asyncio]==2.0.58
+asyncpg==0.32.0
+alembic==1.20.1
+redis==7.4.1
+httpx==0.29.0
+argon2-cffi==25.1.0
+pyjwt==2.15.1
+cryptography==50.0.2
+boto3==1.44.12
+pillow==13.0.0
+python-multipart==0.0.34
