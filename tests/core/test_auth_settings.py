@@ -23,6 +23,17 @@ def test_deployed_environments_need_a_real_jwt_secret(environment: str, secret: 
         Settings(ENVIRONMENT=environment, JWT_SECRET=secret)
 
 
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_deployed_environments_cannot_run_in_debug_mode(environment: str) -> None:
+    # Debug mode would send stack traces to clients.
+    with pytest.raises(ValidationError, match="DEBUG is only allowed"):
+        Settings(ENVIRONMENT=environment, **DEPLOYED, DEBUG=True)
+
+
+def test_debug_mode_is_fine_locally() -> None:
+    assert Settings(ENVIRONMENT="local", DEBUG=True).DEBUG is True
+
+
 def test_deployed_environments_cannot_disable_turnstile() -> None:
     with pytest.raises(ValidationError, match="TURNSTILE_DISABLED"):
         Settings(ENVIRONMENT="staging", **DEPLOYED, TURNSTILE_DISABLED=True)

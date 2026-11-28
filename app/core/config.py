@@ -203,6 +203,9 @@ class Settings(BaseSettings):
             raise ValueError(f"JWT_SECRET must be at least {MIN_JWT_SECRET_LENGTH} characters")
         if self.TOTP_ENCRYPTION_KEY.get_secret_value() == INSECURE_DEV_TOTP_KEY:
             raise ValueError("TOTP_ENCRYPTION_KEY must be set to a real Fernet key")
+        if self.DEBUG:
+            # Debug mode answers a crash with the full stack trace, skipping our error handler.
+            raise ValueError("DEBUG is only allowed in local and development")
         if self.TURNSTILE_DISABLED:
             raise ValueError("TURNSTILE_DISABLED is only allowed in local and development")
         if self.SMTP_HOST:
