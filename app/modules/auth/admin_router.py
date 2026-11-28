@@ -4,11 +4,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 
-from app.clients.email import EmailClient, get_email_client
 from app.clients.turnstile import TurnstileClient, get_turnstile_client
 from app.common.dependencies import DBSession, RedisClient
 from app.common.http import client_ip, user_agent
 from app.common.schemas import CustomResponse
+from app.jobs.email import EmailQueue, get_email_queue
 from app.modules.admin_users.models import AdminUser
 from app.modules.auth.admin_auth import AdminAuthService
 from app.modules.auth.cookies import set_session_cookies
@@ -33,7 +33,7 @@ def get_admin_auth_service(session: DBSession, redis: RedisClient) -> AdminAuthS
 
 
 AdminAuthServiceDep = Annotated[AdminAuthService, Depends(get_admin_auth_service)]
-EmailClientDep = Annotated[EmailClient, Depends(get_email_client)]
+EmailQueueDep = Annotated[EmailQueue, Depends(get_email_queue)]
 TurnstileClientDep = Annotated[TurnstileClient, Depends(get_turnstile_client)]
 
 
@@ -96,7 +96,7 @@ async def forgot_password(
     request: Request,
     background: BackgroundTasks,
     auth: AdminAuthServiceDep,
-    email_client: EmailClientDep,
+    emails: EmailQueueDep,
     turnstile: TurnstileClientDep,
 ) -> CustomResponse[None]:
     ip = client_ip(request)
@@ -104,7 +104,7 @@ async def forgot_password(
         raise CaptchaFailedException()
     message = await auth.forgot_password(body.email, ip=ip)
     if message is not None:
-        background.add_task(email_client.send, message)
+        background.add_task(emails.enqueue, message)
     return CustomResponse(
         message="If this email belongs to a Notchs admin, a reset link is on its way."
     )
@@ -127,7 +127,7 @@ async def change_password(
     response: Response,
     background: BackgroundTasks,
     auth: AdminAuthServiceDep,
-    email_client: EmailClientDep,
+    emails: EmailQueueDep,
 ) -> CustomResponse[AdminMeOut]:
     login, notice = await auth.change_password(
         admin,
@@ -136,7 +136,7 @@ async def change_password(
         ip=client_ip(request),
         user_agent=user_agent(request),
     )
-    background.add_task(email_client.send, notice)
+    background.add_task(emails.enqueue, notice)
     return CustomResponse(
         message="Password changed. Other devices were logged out.",
         data=_logged_in(response, login),

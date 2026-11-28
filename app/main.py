@@ -9,13 +9,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
-from app.clients.email import EmailClient
 from app.core import api_docs
 from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import get_logger, setup_logging
 from app.core.redis import check_redis, redis_client
 from app.db.session import AsyncSessionLocal, check_connection, engine
+from app.jobs.email import EmailQueue
+from app.jobs.handlers import HANDLERS
+from app.jobs.worker import Worker
 from app.middleware.protection import ProtectionMiddleware
 from app.middleware.request_context import RequestContextMiddleware
 from app.modules.admin_users.bootstrap import ensure_first_admin
@@ -59,9 +61,16 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # Never stops the API from starting; the log says what happened.
         try:
             async with AsyncSessionLocal() as session:
-                await ensure_first_admin(session, redis_client, EmailClient())
+                await ensure_first_admin(session, redis_client, EmailQueue(redis_client))
         except Exception:
             logger.exception("Could not create the first admin from FIRST_ADMIN_EMAIL")
+    # The job worker (emails). Safe in every API server at once: each job goes to one worker.
+    # Off when the worker runs as its own process (`python -m app.jobs.worker`).
+    job_worker = None
+    if settings.JOBS_WORKER_IN_API:
+        job_worker = asyncio.create_task(
+            Worker(redis_client, HANDLERS).run_forever(), name="job-worker"
+        )
     sweeper = None
     if settings.WHATSAPP_SWEEP_INTERVAL_SECONDS > 0:
         sweeper = asyncio.create_task(
@@ -77,7 +86,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             name="leaderboard-rebuilder",
         )
     yield
-    for task in (sweeper, rebuilder):
+    for task in (job_worker, sweeper, rebuilder):
         if task is not None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

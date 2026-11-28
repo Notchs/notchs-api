@@ -4,11 +4,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 
-from app.clients.email import EmailClient, get_email_client
 from app.clients.turnstile import TurnstileClient, get_turnstile_client
 from app.common.dependencies import DBSession, RedisClient
 from app.common.http import client_ip, user_agent
 from app.common.schemas import CustomResponse
+from app.jobs.email import EmailQueue, get_email_queue
 from app.modules.auth.cookies import set_session_cookies
 from app.modules.auth.dependencies import CurrentVenueMember
 from app.modules.auth.enums import SubjectType
@@ -36,7 +36,7 @@ def get_venue_auth_service(session: DBSession, redis: RedisClient) -> VenueAuthS
 
 
 VenueAuthServiceDep = Annotated[VenueAuthService, Depends(get_venue_auth_service)]
-EmailClientDep = Annotated[EmailClient, Depends(get_email_client)]
+EmailQueueDep = Annotated[EmailQueue, Depends(get_email_queue)]
 TurnstileClientDep = Annotated[TurnstileClient, Depends(get_turnstile_client)]
 
 
@@ -104,7 +104,7 @@ async def forgot_password(
     request: Request,
     background: BackgroundTasks,
     auth: VenueAuthServiceDep,
-    email_client: EmailClientDep,
+    emails: EmailQueueDep,
     turnstile: TurnstileClientDep,
 ) -> CustomResponse[None]:
     ip = client_ip(request)
@@ -112,7 +112,7 @@ async def forgot_password(
         raise CaptchaFailedException()
     message = await auth.forgot_password(body.email, ip=ip)
     if message is not None:
-        background.add_task(email_client.send, message)
+        background.add_task(emails.enqueue, message)
     return CustomResponse(
         message="If this email belongs to a Notchs venue, a reset link is on its way."
     )
@@ -135,7 +135,7 @@ async def change_password(
     response: Response,
     background: BackgroundTasks,
     auth: VenueAuthServiceDep,
-    email_client: EmailClientDep,
+    emails: EmailQueueDep,
 ) -> CustomResponse[VenueMeOut]:
     logged_in, notice = await auth.change_password(
         member,
@@ -145,7 +145,7 @@ async def change_password(
         user_agent=user_agent(request),
     )
     _set_cookies(response, logged_in)
-    background.add_task(email_client.send, notice)
+    background.add_task(emails.enqueue, notice)
     return CustomResponse(
         message="Password changed. Other devices were logged out.",
         data=_me(logged_in.member, logged_in.venue, logged_in.session),
@@ -164,13 +164,13 @@ async def send_email_change_code(
     request: Request,
     background: BackgroundTasks,
     auth: VenueAuthServiceDep,
-    email_client: EmailClientDep,
+    emails: EmailQueueDep,
 ) -> CustomResponse[None]:
     message = await auth.request_email_change(
         member, body.new_email, body.current_password, ip=client_ip(request)
     )
     if message is not None:
-        background.add_task(email_client.send, message)
+        background.add_task(emails.enqueue, message)
     return CustomResponse(message="If this email can be used, a 6-digit code is on its way to it.")
 
 
@@ -184,10 +184,10 @@ async def verify_email_change(
     member: CurrentVenueMember,
     background: BackgroundTasks,
     auth: VenueAuthServiceDep,
-    email_client: EmailClientDep,
+    emails: EmailQueueDep,
 ) -> CustomResponse[VenueMeOut]:
     notice = await auth.confirm_email_change(member, body.code)
-    background.add_task(email_client.send, notice)
+    background.add_task(emails.enqueue, notice)
     return CustomResponse(
         message="Login email changed.", data=_me(member, await auth.venue_of(member))
     )

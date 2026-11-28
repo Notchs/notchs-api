@@ -4,7 +4,6 @@ import pytest
 from pydantic import SecretStr
 from sqlalchemy import delete, func, select
 
-from app.clients.email import EmailSendError
 from app.core.config import settings
 from app.modules.admin_users.bootstrap import ensure_first_admin
 from app.modules.admin_users.models import AdminRole, AdminUser
@@ -93,12 +92,12 @@ async def test_a_lost_link_is_rescued_by_adding_the_password(
 ) -> None:
     """What happened on the first deploy: the account was made, the email never arrived."""
 
-    class BrokenEmail:
-        async def send(self, message) -> None:
-            raise EmailSendError("Resend returned 403: domain is not verified")
+    class LostEmail:
+        async def enqueue(self, message) -> None:
+            pass  # e.g. Resend refused it every time ("domain is not verified")
 
     await no_admins(db)
-    assert await ensure_first_admin(db, redis, BrokenEmail()) is True  # created, email failed
+    assert await ensure_first_admin(db, redis, LostEmail()) is True  # created, email lost
     assert (await login(api)).status_code == 401
 
     first_admin()

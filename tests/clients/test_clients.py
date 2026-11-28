@@ -161,6 +161,21 @@ async def test_sends_through_resend(live_email: None) -> None:
     }
 
 
+async def test_resend_gets_the_idempotency_key_only_when_given(live_email: None) -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"id": "email_1"})
+
+    client = EmailClient(_http(httpx.MockTransport(handler)))
+    await client.send(MESSAGE, idempotency_key="production-job-1-0")
+    await client.send(MESSAGE)
+
+    assert seen[0].headers["Idempotency-Key"] == "production-job-1-0"
+    assert "Idempotency-Key" not in seen[1].headers
+
+
 async def test_resend_error_is_raised(live_email: None) -> None:
     transport = httpx.MockTransport(lambda _: httpx.Response(403, json={"message": "bad key"}))
 

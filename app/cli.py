@@ -15,14 +15,15 @@ import asyncio
 import sys
 
 from sqlalchemy import make_url, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.clients.email import EmailClient
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.core.redis import redis_client
 from app.db.demo import DemoNotAllowed, check_allowed, is_shared, remove_demo, seed_demo
 from app.db.seed import seed
 from app.db.session import AsyncSessionLocal, engine
+from app.jobs.email import EmailQueue
 from app.modules.admin_users.models import AdminRole, AdminUser
 from app.modules.admin_users.roles import built_in_role
 from app.modules.auth.admin_auth import AdminAuthService
@@ -30,9 +31,12 @@ from app.modules.auth.emails import check_email
 from app.modules.leaderboards.service import LeaderboardService
 
 
-async def _send_invite(admin: AdminUser, auth: AdminAuthService) -> str:
-    message = await auth.invite_email(admin)
-    await EmailClient().send(message)
+async def _send_invite(session: AsyncSession, admin: AdminUser) -> str:
+    """Commit the new link, then queue its email (a running API or job worker sends it).
+    Returns the text, which is also printed, so the link works before the email arrives."""
+    message = await AdminAuthService(session, redis_client).invite_email(admin)
+    await session.commit()
+    await EmailQueue(redis_client).enqueue(message)
     return message.text
 
 
@@ -45,8 +49,7 @@ async def create_admin(email: str, name: str, role: AdminRole) -> int:
         admin = AdminUser(email=email, name=name.strip(), role=await built_in_role(session, role))
         session.add(admin)
         await session.flush()
-        text = await _send_invite(admin, AdminAuthService(session, redis_client))
-        await session.commit()
+        text = await _send_invite(session, admin)
     print(f"Created {role.value} {admin.admin_user_code} <{email}>.\n\n{text}")
     return 0
 
@@ -58,8 +61,7 @@ async def admin_link(email: str) -> int:
         if admin is None:
             print(f"No admin with {email}. Use create-admin.")
             return 1
-        text = await _send_invite(admin, AdminAuthService(session, redis_client))
-        await session.commit()
+        text = await _send_invite(session, admin)
     print(f"New set-password link for {email} (older links stop working).\n\n{text}")
     return 0
 

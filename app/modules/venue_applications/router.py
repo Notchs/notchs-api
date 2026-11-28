@@ -4,11 +4,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 
-from app.clients.email import EmailClient, get_email_client
 from app.clients.turnstile import TurnstileClient, get_turnstile_client
 from app.common.dependencies import DBSession, RedisClient
 from app.common.http import client_ip
 from app.common.schemas import CustomResponse
+from app.jobs.email import EmailQueue, get_email_queue
 from app.modules.auth.exceptions import CaptchaFailedException
 from app.modules.auth.otp import VERIFICATION_TOKEN_TTL_SECONDS
 from app.modules.venue_applications.schemas import (
@@ -28,7 +28,7 @@ def get_application_service(session: DBSession, redis: RedisClient) -> VenueAppl
 
 
 ApplicationServiceDep = Annotated[VenueApplicationService, Depends(get_application_service)]
-EmailClientDep = Annotated[EmailClient, Depends(get_email_client)]
+EmailQueueDep = Annotated[EmailQueue, Depends(get_email_queue)]
 TurnstileClientDep = Annotated[TurnstileClient, Depends(get_turnstile_client)]
 
 
@@ -43,14 +43,14 @@ async def send_code(
     request: Request,
     background: BackgroundTasks,
     service: ApplicationServiceDep,
-    email_client: EmailClientDep,
+    emails: EmailQueueDep,
     turnstile: TurnstileClientDep,
 ) -> CustomResponse[None]:
     ip = client_ip(request)
     if not await turnstile.verify(body.turnstile_token, ip=ip):
         raise CaptchaFailedException()
     message = await service.send_code(body.email, ip=ip)
-    background.add_task(email_client.send, message)
+    background.add_task(emails.enqueue, message)
     return CustomResponse(message="We sent a 6-digit code to your email.")
 
 
@@ -82,11 +82,11 @@ async def submit(
     request: Request,
     background: BackgroundTasks,
     service: ApplicationServiceDep,
-    email_client: EmailClientDep,
+    emails: EmailQueueDep,
 ) -> CustomResponse[ApplicationCreated]:
     application, notice = await service.submit(body, ip=client_ip(request))
     if notice is not None:
-        background.add_task(email_client.send, notice)
+        background.add_task(emails.enqueue, notice)
     return CustomResponse(
         message="Application received. We'll email you once it's reviewed.",
         data=ApplicationCreated(application_code=application.application_code),

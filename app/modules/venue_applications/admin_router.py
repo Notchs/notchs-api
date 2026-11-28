@@ -5,9 +5,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 
-from app.clients.email import EmailClient, get_email_client
 from app.common.dependencies import DBSession, Pagination, RedisClient
 from app.common.schemas import CustomResponse, PaginatedResponse
+from app.jobs.email import EmailQueue, get_email_queue
 from app.modules.auth.dependencies import CurrentAdmin, CurrentFullAdmin
 from app.modules.venue_applications.admin_service import ApplicationReviewService
 from app.modules.venue_applications.models import ApplicationStatus
@@ -26,7 +26,7 @@ def get_review_service(session: DBSession, redis: RedisClient) -> ApplicationRev
 
 
 ReviewServiceDep = Annotated[ApplicationReviewService, Depends(get_review_service)]
-EmailClientDep = Annotated[EmailClient, Depends(get_email_client)]
+EmailQueueDep = Annotated[EmailQueue, Depends(get_email_queue)]
 
 
 @router.get(
@@ -72,10 +72,10 @@ async def approve(
     admin: CurrentFullAdmin,
     service: ReviewServiceDep,
     background: BackgroundTasks,
-    email_client: EmailClientDep,
+    emails: EmailQueueDep,
 ) -> CustomResponse[ApprovedOut]:
     application, venue, member, welcome = await service.approve(ref, admin, body)
-    background.add_task(email_client.send, welcome)
+    background.add_task(emails.enqueue, welcome)
     return CustomResponse(
         message=f"Approved. {member.email} will get a link to set their password.",
         data=ApprovedOut(
@@ -99,9 +99,9 @@ async def reject(
     admin: CurrentFullAdmin,
     service: ReviewServiceDep,
     background: BackgroundTasks,
-    email_client: EmailClientDep,
+    emails: EmailQueueDep,
 ) -> CustomResponse[ApplicationOut]:
     application, notice = await service.reject(ref, admin, body)
     if notice is not None:
-        background.add_task(email_client.send, notice)
+        background.add_task(emails.enqueue, notice)
     return CustomResponse(message="Rejected.", data=ApplicationOut.model_validate(application))

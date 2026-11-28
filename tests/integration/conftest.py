@@ -23,6 +23,7 @@ from app.clients.turnstile import get_turnstile_client
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.db.session import build_connect_args, get_db_session
+from app.jobs.email import get_email_queue
 from app.main import app
 from app.modules.whatsapp.models import WhatsAppMessage
 from app.modules.whatsapp.processor import InboundProcessor, get_inbound_processor
@@ -99,12 +100,16 @@ async def db(db_engine, db_schema: str) -> AsyncIterator[AsyncSession]:
 
 
 class Outbox:
-    """Stands in for EmailClient: keeps what would have been sent."""
+    """Stands in for EmailClient and EmailQueue: keeps what would have been sent (the queue's
+    worker is tested on its own, in tests/jobs)."""
 
     def __init__(self) -> None:
         self.sent: list[EmailMessage] = []
 
     async def send(self, message: EmailMessage) -> None:
+        self.sent.append(message)
+
+    async def enqueue(self, message: EmailMessage) -> None:
         self.sent.append(message)
 
 
@@ -218,6 +223,7 @@ async def api(
         get_db_session: _session,
         get_redis: lambda: redis,
         get_email_client: lambda: outbox,
+        get_email_queue: lambda: outbox,
         get_turnstile_client: lambda: turnstile,
         get_inbound_processor: lambda: processor,
         get_photo_storage: lambda: storage,

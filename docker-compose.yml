@@ -23,6 +23,25 @@ services:
     volumes:
       - .:/app
 
+  # Optional: the job worker as its own process (`docker compose --profile worker up worker`).
+  # The API runs one inside itself anyway (JOBS_WORKER_IN_API); running both is safe.
+  worker:
+    build:
+      context: .
+      target: dev
+    profiles: ["worker"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: python -m app.jobs.worker
+    volumes:
+      - .:/app
+
   redis:
     image: redis:7-alpine
     # No host port: only the api container talks to it. Data is kept in the redisdata volume.

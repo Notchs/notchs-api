@@ -4,9 +4,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 
-from app.clients.email import EmailClient, get_email_client
 from app.common.dependencies import DBSession, RedisClient
 from app.common.schemas import CustomResponse, PublicCode
+from app.jobs.email import EmailQueue, get_email_queue
 from app.modules.admin_users.schemas import AdminUserIn, AdminUserOut, AdminUserUpdate
 from app.modules.admin_users.service import AdminUserService
 from app.modules.auth.admin_auth import AdminAuthService
@@ -20,7 +20,7 @@ def get_admin_user_service(session: DBSession, redis: RedisClient) -> AdminUserS
 
 
 ServiceDep = Annotated[AdminUserService, Depends(get_admin_user_service)]
-EmailClientDep = Annotated[EmailClient, Depends(get_email_client)]
+EmailQueueDep = Annotated[EmailQueue, Depends(get_email_queue)]
 
 
 @router.get("", response_model=CustomResponse[list[AdminUserOut]], summary="Every admin account")
@@ -40,10 +40,10 @@ async def invite(
     actor: CurrentFullAdmin,
     admins: ServiceDep,
     background: BackgroundTasks,
-    email_client: EmailClientDep,
+    emails: EmailQueueDep,
 ) -> CustomResponse[AdminUserOut]:
     admin, message = await admins.invite(actor, body)
-    background.add_task(email_client.send, message)
+    background.add_task(emails.enqueue, message)
     return CustomResponse(
         message=f"Added. {admin.email} will get a link to set a password.", data=admin
     )
@@ -70,7 +70,7 @@ async def new_link(
     actor: CurrentFullAdmin,
     admins: ServiceDep,
     background: BackgroundTasks,
-    email_client: EmailClientDep,
+    emails: EmailQueueDep,
 ) -> CustomResponse[None]:
-    background.add_task(email_client.send, await admins.new_link(actor, code))
+    background.add_task(emails.enqueue, await admins.new_link(actor, code))
     return CustomResponse(message="Sent a new link.")

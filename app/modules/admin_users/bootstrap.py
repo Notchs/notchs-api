@@ -24,9 +24,9 @@ from redis.asyncio import Redis
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.clients.email import EmailClient, EmailSendError
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.jobs.email import EmailQueue
 from app.modules.admin_users.models import AdminRole, AdminUser
 from app.modules.admin_users.roles import built_in_role
 from app.modules.auth.admin_auth import AdminAuthService
@@ -52,9 +52,7 @@ async def _password_hash(email: str) -> str | None:
     return await hash_password_async(password)
 
 
-async def ensure_first_admin(
-    session: AsyncSession, redis: Redis, email_client: EmailClient
-) -> bool:
+async def ensure_first_admin(session: AsyncSession, redis: Redis, emails: EmailQueue) -> bool:
     """Create the admin from FIRST_ADMIN_EMAIL, or give it its first password. True if anything
     changed."""
     email = settings.FIRST_ADMIN_EMAIL
@@ -97,13 +95,8 @@ async def ensure_first_admin(
         return True
     message = await AdminAuthService(session, redis).invite_email(admin)
     await session.commit()
-    try:
-        await email_client.send(message)
-    except EmailSendError:
-        logger.exception(
-            "Created admin %s but the set-password email failed; set FIRST_ADMIN_PASSWORD",
-            admin.admin_user_code,
-        )
-        return True
-    logger.info("Created admin %s from settings; set-password link emailed", admin.admin_user_code)
+    # Queued: it reaches the inbox once a job worker runs. If it never arrives, setting
+    # FIRST_ADMIN_PASSWORD gives the account its password on the next start.
+    await emails.enqueue(message)
+    logger.info("Created admin %s from settings; set-password link queued", admin.admin_user_code)
     return True

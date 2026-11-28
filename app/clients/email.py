@@ -41,7 +41,9 @@ class EmailClient:
         # login emails are rare, so a shared connection pool is not worth the lifecycle.
         self._http = http
 
-    async def send(self, message: EmailMessage) -> None:
+    async def send(self, message: EmailMessage, *, idempotency_key: str | None = None) -> None:
+        """`idempotency_key`: Resend sends at most one email per key (kept 24 hours), so the job
+        worker can retry without ever sending twice."""
         if settings.EMAIL_DRY_RUN:
             logger.info(
                 "EMAIL (dry run) to=%s subject=%r\n%s", message.to, message.subject, message.text
@@ -63,6 +65,8 @@ class EmailClient:
         if message.html is not None:
             payload["html"] = message.html
         headers = {"Authorization": f"Bearer {settings.RESEND_API_KEY.get_secret_value()}"}
+        if idempotency_key is not None:
+            headers["Idempotency-Key"] = idempotency_key
 
         try:
             if self._http is not None:

@@ -157,6 +157,9 @@ class Settings(BaseSettings):
     WHATSAPP_SWEEP_INTERVAL_SECONDS: float = 60
     # How often leaderboards are rebuilt from the ledger, from startup on. 0 turns it off.
     LEADERBOARD_REBUILD_INTERVAL_SECONDS: float = 3600
+    # Run the job worker (emails) inside the API. Set false when it runs as its own process
+    # (`python -m app.jobs.worker`); running both is also safe.
+    JOBS_WORKER_IN_API: bool = True
 
     @field_validator("REDIS_URL")
     @classmethod
